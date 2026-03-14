@@ -9,6 +9,11 @@
 ## 📝 Descripción
 **RaidMark** es una mesa de tácticas para raids que permite al **Raid Leader** colocar íconos sobre un mapa 2D táctico del encuentro. Estos se sincronizan en tiempo real con todos los miembros de la raid para coordinar movimientos y estrategias.
 
+
+
+
+
+
 ## 🛠 Instalación
 1. **Cierra el juego** completamente.
 2. Copia la carpeta `RaidMark` dentro de:  
