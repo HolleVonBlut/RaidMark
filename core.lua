@@ -7,28 +7,29 @@ RaidMark = {}
 local RM = RaidMark
 
 -- -- Version del protocolo de red --------------------------------
-RM.VERSION      = "0.1"
+RM.VERSION      = "0.59"
+RM.VERSION_NUM  = 2        -- numero entero para comparar (aumentar con cada release)
 RM.ADDON_PREFIX = "RaidMark"
 
 -- -- Estado global -----------------------------------------------
 RM.state = {
-    -- Mapa activo (key de RaidMark_Maps)
     currentMap    = nil,
-
-    -- Iconos colocados en el mapa
-    -- { id, type, x, y, label }
     placedIcons   = {},
-
-    -- Siguiente ID disponible para iconos
     nextIconId    = 1,
-
-    -- Permisos: ?pueden los ASSIST mover iconos?
     assistCanMove = false,
-
-    -- ?Esta el mapa visible?
     mapVisible    = false,
-}
 
+    -- Puntero: slots de color { owner=nombre o nil, color="RED"|"BLUE"|"GREEN"|"YELLOW" }
+    pointerSlots = {
+        { color = "RED",    r=1,   g=0.1, b=0.1, owner=nil },  -- Slot 1: solo RL
+        { color = "BLUE",   r=0.3, g=0.5, b=1,   owner=nil },
+        { color = "GREEN",  r=0.2, g=0.9, b=0.2, owner=nil },
+        { color = "YELLOW", r=1,   g=0.9, b=0.1, owner=nil },
+    },
+    myPointerSlot   = nil,    -- indice 1-4 que tiene este jugador, nil si ninguno
+    pointerActive   = false,  -- si el modo puntero esta activo localmente
+    pointerMouseBtn = false,  -- true mientras un boton del mouse esta presionado
+}
 -- -- Constantes de tipos de icono --------------------------------
 RM.ICON_TYPES = {
     "TANK", "HEALER", "DPS", "DPS_MELEE", "CASTER", "ARROW",
@@ -163,9 +164,20 @@ function RM.OnLoad()
         DEFAULT_CHAT_FRAME:AddMessage("RaidMark DEBUG: MapFrame.Build no encontrado")
     end
 
-    DEFAULT_CHAT_FRAME:AddMessage(
+        DEFAULT_CHAT_FRAME:AddMessage(
         "RaidMark v" .. RM.VERSION .. " cargado. /rm para abrir."
     )
+
+    -- Broadcast de version al grupo (con delay para que la red este lista)
+    local vDelay = CreateFrame("Frame")
+    local vTimer = 0
+    vDelay:SetScript("OnUpdate", function()
+        vTimer = vTimer + arg1
+        if vTimer >= 3 then
+            RM.Network.SendVersion()
+            vDelay:SetScript("OnUpdate", nil)
+        end
+    end)
 end
 
 function RM.OnEnterWorld()

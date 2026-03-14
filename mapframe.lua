@@ -134,6 +134,39 @@ contentFrame:SetScript("OnMouseDown", function()
     RM.Icons.PlaceNew(MF.selectedIconType, nx, ny, label)
 end)
 
+-- Pausar puntero cuando se presiona cualquier boton del mouse sobre el mapa
+contentFrame:SetScript("OnMouseDown", function()
+    RM.state.pointerMouseBtn = true
+    -- logica original de colocar iconos
+    if arg1 ~= "LeftButton" then return end
+    if not RM.Permissions.CanPlace() then return end
+    if not MF.selectedIconType then return end
+
+    local mLeft = contentFrame:GetLeft()
+    local mTop  = contentFrame:GetTop()
+    local mW    = contentFrame:GetWidth()
+    local mH    = contentFrame:GetHeight()
+    local cx, cy = GetCursorPosition()
+    local scale = UIParent:GetScale()
+    cx = cx / scale
+    cy = cy / scale
+    local nx = (cx - mLeft) / mW
+    local ny = (mTop - cy)  / mH
+    nx = math.max(0.01, math.min(0.99, nx))
+    ny = math.max(0.01, math.min(0.99, ny))
+    local label = ""
+    if MF.selectedMemberName then
+        label = MF.selectedMemberName
+        MF.selectedMemberName = nil
+    end
+    RM.Icons.PlaceNew(MF.selectedIconType, nx, ny, label)
+end)
+
+contentFrame:SetScript("OnMouseUp", function()
+    RM.state.pointerMouseBtn = false
+end)
+
+
 -- -- Panel lateral -----------------------------------------------
 local sidePanel = CreateFrame("Frame", nil, mainFrame)
 sidePanel:SetWidth(PANEL_W)
@@ -232,6 +265,201 @@ local MEMBER_PANEL_Y_OFFSET = SKULLS_Y_START - (ICON_BTN+ICON_GAP)*3 - 20
 MF.selectedIconType   = nil
 MF.selectedMemberName = nil
 MF.allButtons         = {}
+
+-- Puntero local y remoto
+local localPointerFrame  = nil   -- frame que sigue al cursor (solo visible para el duenio)
+local localPointerX      = 0     -- ultima posicion normalizada X
+local localPointerY      = 0     -- ultima posicion normalizada Y
+local remotePointerPaths = {}    -- [sender] = { queue de hasta 5 frames }
+local POINTER_SIZE       = 24
+local POINTER_PATH_MAX   = 90
+local POINTER_PATH_TTL   = 2.0   -- segundos antes de que una sombra desaparezca
+
+-- -- Frame de actualizacion del puntero local -------------------
+local pointerUpdateFrame = CreateFrame("Frame", "RaidMarkPointerUpdate")
+pointerUpdateFrame:SetScript("OnUpdate", function()
+    if not RM.state.pointerActive then return end
+    if not localPointerFrame then return end
+    if RM.state.pointerMouseBtn or not IsAltKeyDown() then
+        localPointerFrame:Hide()
+        return
+    end
+
+    -- Verificar que el cursor este sobre el contentFrame
+    local mLeft = contentFrame:GetLeft()
+    local mTop  = contentFrame:GetTop()
+    local mW    = contentFrame:GetWidth()
+    local mH    = contentFrame:GetHeight()
+    if not mLeft then return end
+
+    local cx, cy = GetCursorPosition()
+    local scale  = UIParent:GetScale()
+    cx = cx / scale
+    cy = cy / scale
+
+    -- Solo mostrar si el cursor esta dentro del mapa
+    if cx < mLeft or cx > mLeft + mW or cy < mTop - mH or cy > mTop then
+        localPointerFrame:Hide()
+        return
+    end
+
+    -- Posicion normalizada
+    localPointerX = (cx - mLeft) / mW
+    localPointerY = (mTop - cy)  / mH
+    localPointerX = math.max(0.01, math.min(0.99, localPointerX))
+    localPointerY = math.max(0.01, math.min(0.99, localPointerY))
+
+    localPointerFrame:ClearAllPoints()
+    localPointerFrame:SetPoint("CENTER", contentFrame, "TOPLEFT",
+                               localPointerX * mW, -localPointerY * mH)
+    localPointerFrame:Show()
+end)
+
+-- Devuelve la ultima posicion normalizada del puntero local (para network.lua)
+function MF.GetPointerPos()
+    if localPointerFrame and localPointerFrame:IsVisible() then
+        return localPointerX, localPointerY
+    end
+    return nil, nil
+end
+
+-- Agregar un punto de "camino" remoto en el mapa
+function MF.AddRemotePointerDot(sender, colorName, px, py)
+    if not remotePointerPaths[sender] then
+        remotePointerPaths[sender] = {}
+    end
+    local path = remotePointerPaths[sender]
+
+    -- Buscar color del slot
+    local sr, sg, sb = 0.8, 0.8, 0.8
+    for _, slot in ipairs(RM.state.pointerSlots) do
+        if slot.color == colorName then
+            sr, sg, sb = slot.r, slot.g, slot.b
+            break
+        end
+    end
+
+    -- Crear dot
+    local dot = CreateFrame("Frame", nil, contentFrame)
+    dot:SetWidth(POINTER_SIZE)
+    dot:SetHeight(POINTER_SIZE)
+    dot:SetFrameLevel(contentFrame:GetFrameLevel() + 3)
+    local mW = contentFrame:GetWidth()
+    local mH = contentFrame:GetHeight()
+    dot:SetPoint("CENTER", contentFrame, "TOPLEFT", px * mW, -py * mH)
+
+    local tex = dot:CreateTexture(nil, "ARTWORK")
+    tex:SetAllPoints(dot)
+    tex:SetTexture(RM.ICON_PATH .. "icon_circle_S")
+    tex:SetVertexColor(sr, sg, sb, 1.0)   -- relleno completo
+
+    dot.ttl      = POINTER_PATH_TTL
+    dot.elapsed  = 0
+
+    dot:SetScript("OnUpdate", function()
+        dot.elapsed = dot.elapsed + arg1
+        if dot.elapsed >= dot.ttl then
+            dot:Hide()
+            dot:SetScript("OnUpdate", nil)
+        else
+            -- Fade out en el ultimo 30%
+            local fade = dot.elapsed / dot.ttl
+            if fade > 0.7 then
+                local a = (1 - fade) / 0.3
+                tex:SetVertexColor(sr, sg, sb, a)  -- 1.0 → 0
+            end
+        end
+    end)
+
+    table.insert(path, dot)
+
+    -- Si hay mas de 5, ocultar el mas antiguo
+    if table.getn(path) > POINTER_PATH_MAX then
+        local oldest = table.remove(path, 1)
+        oldest:Hide()
+        oldest:SetScript("OnUpdate", nil)
+    end
+end
+
+-- Mini consola dinamica con mensajes idle y prioridad
+local consolePriorityTimer  = 0      -- tiempo restante del mensaje prioritario
+local consoleIdleTimer      = 4      -- arranca en 4 para no mostrar idle de inmediato
+local consoleIdleIndex      = 1
+local CONSOLE_PRIORITY_TTL  = 5      -- segundos que dura un mensaje prioritario
+local CONSOLE_IDLE_INTERVAL = 4      -- segundos entre mensajes idle
+
+local consoleIdleMessages = {
+    { text = "RaidMark v" .. RM.VERSION,       r = 0.4, g = 0.7, b = 1.0 },
+    { text = "By Holle - South Seas Server",   r = 0.6, g = 0.6, b = 0.6 },
+}
+
+local function consoleShowIdle()
+    if not MF.consoleText then return end
+    local msg = consoleIdleMessages[consoleIdleIndex]
+    MF.consoleText:SetText(msg.text)
+    MF.consoleText:SetTextColor(msg.r, msg.g, msg.b, 1)
+    consoleIdleIndex = math.mod(consoleIdleIndex, table.getn(consoleIdleMessages)) + 1
+end
+
+-- Mensaje prioritario: interrumpe el idle y dura 5 segundos
+function MF.ConsoleMsg(text, r, g, b)
+    r = r or 0.7
+    g = g or 0.9
+    b = b or 1
+    consolePriorityTimer = CONSOLE_PRIORITY_TTL
+    if MF.consoleText then
+        MF.consoleText:SetText(text)
+        MF.consoleText:SetTextColor(r, g, b, 1)
+    end
+end
+
+-- OnUpdate de la consola (cicla entre mensajes idle cuando no hay prioridad)
+local consoleUpdateFrame = CreateFrame("Frame", "RaidMarkConsoleUpdate")
+consoleUpdateFrame:SetScript("OnUpdate", function()
+    local dt = arg1
+
+    if consolePriorityTimer > 0 then
+        consolePriorityTimer = consolePriorityTimer - dt
+        if consolePriorityTimer <= 0 then
+            consolePriorityTimer = 0
+            consoleIdleTimer     = 0   -- fuerza mostrar idle inmediatamente
+        end
+        return
+    end
+
+    -- Sin mensaje prioritario: ciclar idle
+    consoleIdleTimer = consoleIdleTimer - dt
+    if consoleIdleTimer <= 0 then
+        consoleIdleTimer = CONSOLE_IDLE_INTERVAL
+        consoleShowIdle()
+    end
+end)
+
+-- Actualizar indicadores visuales de slots en la toolbar
+function MF.UpdatePointerSlotUI()
+    if not MF.slotIndicators then return end
+    for i, ind in ipairs(MF.slotIndicators) do
+        local slot = RM.state.pointerSlots[i]
+        if slot.owner or (i == 1 and RM.Permissions.IsRL()) then
+            ind:SetAlpha(1.0)
+        else
+            ind:SetAlpha(0.25)
+        end
+    end
+end
+
+local function buildPointerLocalFrame()
+    localPointerFrame = CreateFrame("Frame", nil, contentFrame)
+    localPointerFrame:SetWidth(POINTER_SIZE)
+    localPointerFrame:SetHeight(POINTER_SIZE)
+    localPointerFrame:SetFrameLevel(contentFrame:GetFrameLevel() + 5)
+    local tex = localPointerFrame:CreateTexture(nil, "ARTWORK")
+    tex:SetAllPoints(localPointerFrame)
+    tex:SetTexture(RM.ICON_PATH .. "icon_circle_S")
+    tex:SetVertexColor(1, 0.1, 0.1, 0.9)  -- rojo por defecto, cambia con el slot
+    localPointerFrame.tex = tex
+    localPointerFrame:Hide()
+end
 
 local function buildRoleButtons()
     -- Label "Iconos de Rol" con fondo para que sea legible
@@ -645,6 +873,158 @@ local function buildToolbar()
     end)
     syncBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
+
+    syncBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    xOff = xOff + 88
+
+    -- =========================================================
+    -- ZONA DE PUNTERO: check + 4 indicadores de slot + consola
+    -- =========================================================
+
+    -- [Check Modo Puntero]
+    local ptrCheck = CreateFrame("Button", nil, toolbar)
+    ptrCheck:SetWidth(22)
+    ptrCheck:SetHeight(22)
+    ptrCheck:SetPoint("LEFT", toolbar, "LEFT", xOff, 0)
+    ptrCheck:SetBackdrop({
+        bgFile   = "Interface\\DialogFrame\\UI-DialogBox-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        edgeSize = 8,
+        insets   = { left=2, right=2, top=2, bottom=2 },
+    })
+    ptrCheck:SetBackdropColor(0.08, 0.08, 0.08, 0.95)
+    ptrCheck:SetBackdropBorderColor(0.5, 0.42, 0.22, 0.9)
+    local ptrCheckMark = ptrCheck:CreateTexture(nil, "OVERLAY")
+    ptrCheckMark:SetWidth(14); ptrCheckMark:SetHeight(14)
+    ptrCheckMark:SetPoint("CENTER", ptrCheck, "CENTER", 0, 0)
+    ptrCheckMark:SetTexture(RM.ICON_PATH .. "icon_circle_S")
+    ptrCheckMark:SetVertexColor(1, 0.1, 0.1, 0.9)
+    ptrCheckMark:Hide()
+
+    -- Label "Modo Puntero" debajo
+    local ptrLabel = toolbar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    ptrLabel:SetPoint("TOP", ptrCheck, "BOTTOM", 0, -1)
+    ptrLabel:SetText("Puntero / Alt")
+    BigFont(ptrLabel, 8)
+    ptrLabel:SetTextColor(0.7, 0.7, 0.7, 1)
+
+    ptrCheck:SetScript("OnClick", function()
+        if not RM.Permissions.CanPlace() then
+            MF.ConsoleMsg("Sin permisos: no eres RL ni Asistente autorizado.", 1, 0.3, 0.2)
+            return
+        end
+
+        if RM.state.pointerActive then
+            -- Desactivar: limpiar slot localmente primero
+            local prevSlot = RM.state.myPointerSlot
+            if prevSlot then
+                RM.state.pointerSlots[prevSlot].owner = nil  -- <-- FIX: liberar slot local
+            end
+            RM.state.pointerActive = false
+            RM.state.myPointerSlot = nil
+            ptrCheckMark:Hide()
+            ptrCheck:SetBackdropBorderColor(0.5, 0.42, 0.22, 0.9)
+            if localPointerFrame then localPointerFrame:Hide() end
+            RM.Network.SendPointerRelease()
+            MF.ConsoleMsg("Modo puntero desactivado.")
+            MF.UpdatePointerSlotUI()
+        else
+            -- Activar: RL siempre fuerza slot 1, asistentes buscan del 2 al 4
+            local foundSlot = nil
+            local myName = UnitName("player")
+
+            if RM.Permissions.IsRL() then
+                -- RL siempre toma el slot 1 (rojo), sin importar el estado
+                foundSlot = 1
+                RM.state.pointerSlots[1].owner = nil  -- limpiar por si quedo sucio
+            else
+                -- Asistentes buscan slots 2, 3, 4 libres
+                for i = 2, 4 do
+                    if not RM.state.pointerSlots[i].owner then
+                        foundSlot = i
+                        break
+                    end
+                end
+            end
+
+            if not foundSlot then
+                MF.ConsoleMsg("Todos los slots de puntero estan ocupados.", 1, 0.6, 0.1)
+                return
+            end
+
+            RM.state.pointerActive = true
+            RM.state.myPointerSlot = foundSlot
+            local slot = RM.state.pointerSlots[foundSlot]
+            slot.owner = myName
+            ptrCheckMark:Show()
+            ptrCheck:SetBackdropBorderColor(slot.r, slot.g, slot.b, 1)
+
+            if localPointerFrame then
+                localPointerFrame.tex:SetVertexColor(slot.r, slot.g, slot.b, 1.0)
+            end
+
+            RM.Network.SendPointerClaim(slot.color)
+            MF.ConsoleMsg("Modo puntero activado (" .. slot.color .. ").")
+            MF.UpdatePointerSlotUI()
+        end
+    end)
+    ptrCheck:SetScript("OnEnter", function()
+        GameTooltip:SetOwner(ptrCheck, "ANCHOR_BOTTOM")
+        GameTooltip:SetText("Activar/desactivar modo puntero")
+        GameTooltip:Show()
+    end)
+    ptrCheck:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    ptrCheck:EnableMouse(true)
+    xOff = xOff + 28
+
+    -- 4 indicadores de slot de color
+    MF.slotIndicators = {}
+    local SLOT_SZ = 16
+    for i, slot in ipairs(RM.state.pointerSlots) do
+        local ind = CreateFrame("Frame", nil, toolbar)
+        ind:SetWidth(SLOT_SZ); ind:SetHeight(SLOT_SZ)
+        ind:SetPoint("LEFT", toolbar, "LEFT", xOff + (i-1)*(SLOT_SZ+3), 0)
+        local ibg = ind:CreateTexture(nil, "BACKGROUND")
+        ibg:SetAllPoints(ind)
+        ibg:SetTexture(slot.r * 0.3, slot.g * 0.3, slot.b * 0.3, 0.95)
+        local icircle = ind:CreateTexture(nil, "ARTWORK")
+        icircle:SetWidth(10); icircle:SetHeight(10)
+        icircle:SetPoint("CENTER", ind, "CENTER", 0, 0)
+        icircle:SetTexture(RM.ICON_PATH .. "icon_circle_S")
+        icircle:SetVertexColor(slot.r, slot.g, slot.b, 0.9)
+        ind:SetAlpha(0.25)  -- vacio por defecto
+        table.insert(MF.slotIndicators, ind)
+    end
+    xOff = xOff + 4*(SLOT_SZ+3) + 8
+
+    -- Mini consola informativa (cuadro azul)
+    local consoleW = 160
+    local consoleFrame = CreateFrame("Frame", nil, toolbar)
+    consoleFrame:SetWidth(consoleW)
+    consoleFrame:SetHeight(TOOLBAR_H - 10)
+    consoleFrame:SetPoint("LEFT", toolbar, "LEFT", xOff, 0)
+    consoleFrame:SetBackdrop({
+        bgFile   = "Interface\\DialogFrame\\UI-DialogBox-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        edgeSize = 8,
+        insets   = { left=3, right=3, top=3, bottom=3 },
+    })
+    consoleFrame:SetBackdropColor(0.04, 0.07, 0.15, 0.97)
+    consoleFrame:SetBackdropBorderColor(0.2, 0.4, 0.9, 0.9)
+
+    MF.consoleText = consoleFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    MF.consoleText:SetPoint("TOPLEFT", consoleFrame, "TOPLEFT", 5, -5)
+    MF.consoleText:SetPoint("BOTTOMRIGHT", consoleFrame, "BOTTOMRIGHT", -5, 5)
+    MF.consoleText:SetJustifyH("LEFT")
+    MF.consoleText:SetJustifyV("TOP")
+    BigFont(MF.consoleText, 9)
+    MF.consoleText:SetText("RaidMark v" .. RM.VERSION .. " OK")
+    MF.consoleText:SetTextColor(0.5, 0.8, 1, 1)
+
+    -- [Grid] -- cuadricula local con sliders de opacidad y densidad
+
+
+
     -- [Grid] -- cuadricula local con sliders de opacidad y densidad
     local gridActive = false
     local gridAlpha  = 0.3
@@ -828,4 +1208,6 @@ end
 function MF.Build()
     buildRoleButtons()
     buildToolbar()
+    buildPointerLocalFrame()
+    MF.ConsoleMsg("RaidMark v" .. RM.VERSION .. " listo.")
 end

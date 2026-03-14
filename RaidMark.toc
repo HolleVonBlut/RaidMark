@@ -1,8 +1,8 @@
 ## Interface: 11200
 ## Title: RaidMark — Tactical Map
 ## Notes: Mesa de tácticas para raids. Marcas en tiempo real para todo el grupo.
-## Author: TurtleWoW
-## Version: 0.1
+## Author: Holle
+## Version: 0.59
 ## SavedVariables: RaidMarkDB
 
 maps\maps.lua

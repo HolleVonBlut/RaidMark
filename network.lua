@@ -14,23 +14,48 @@ local MSG_SEP       = ";"   -- separador de campos (NO usar | que WoW interpreta
 -- -- Cola de envio (throttling) ----------------------------------
 -- Guardamos el ultimo mensaje por iconId para evitar flood
 -- Solo enviamos el mas reciente si el timer lo permite
-local pendingMoves   = {}   -- [iconId] = {x, y}
-local timeSinceSend  = 0
-local throttleFrame  = CreateFrame("Frame", "RaidMarkThrottleFrame")
+local pendingMoves     = {}
+local timeSinceSend    = 0
+local throttleFrame    = CreateFrame("Frame", "RaidMarkThrottleFrame")
+
+-- Throttle separado para el puntero (100ms = 10 msgs/seg)
+local ptrTimeSinceSend = 0
+local PTR_INTERVAL     = 0.033
 
 throttleFrame:SetScript("OnUpdate", function()
-    timeSinceSend = timeSinceSend + arg1
+    local dt = arg1
+    timeSinceSend    = timeSinceSend    + dt
+    ptrTimeSinceSend = ptrTimeSinceSend + dt
 
-    if timeSinceSend < SEND_INTERVAL then return end
-    timeSinceSend = 0
-
-    -- Vaciar cola de movimientos pendientes
-    for iconId, pos in pairs(pendingMoves) do
-        N.SendRaw("MOVE" .. MSG_SEP .. iconId .. MSG_SEP
-                         .. string.format("%.4f", pos.x) .. MSG_SEP
-                         .. string.format("%.4f", pos.y))
+    -- Flush cola de movimientos de iconos
+    if timeSinceSend >= SEND_INTERVAL then
+        timeSinceSend = 0
+        for iconId, pos in pairs(pendingMoves) do
+            N.SendRaw("MOVE" .. MSG_SEP .. iconId .. MSG_SEP
+                             .. string.format("%.4f", pos.x) .. MSG_SEP
+                             .. string.format("%.4f", pos.y))
+        end
+        pendingMoves = {}
     end
-    pendingMoves = {}
+
+    -- Flush puntero (250ms)
+    if ptrTimeSinceSend >= PTR_INTERVAL then
+        ptrTimeSinceSend = 0
+        if RM.state.pointerActive
+           and not RM.state.pointerMouseBtn
+           and RM.state.myPointerSlot then
+            -- Pedir posicion actual al MapFrame y enviarla
+            if RM.MapFrame and RM.MapFrame.GetPointerPos then
+                local px, py = RM.MapFrame.GetPointerPos()
+                if px and py then
+                    local slot = RM.state.pointerSlots[RM.state.myPointerSlot]
+                    N.SendRaw("PTR" .. MSG_SEP .. slot.color .. MSG_SEP
+                                    .. string.format("%.4f", px) .. MSG_SEP
+                                    .. string.format("%.4f", py))
+                end
+            end
+        end
+    end
 end)
 
 -- -- Canal de envio -----------------------------------------------
@@ -85,9 +110,30 @@ function N.SendMapChange(mapKey)
 end
 
 -- Cambiar permisos de asistentes
+-- Cambiar permisos de asistentes
 function N.SendPermissions(assistCanMove)
     local val = assistCanMove and "1" or "0"
     N.SendRaw("PERMS" .. MSG_SEP .. val)
+end
+
+-- Broadcast de version al cargar
+function N.SendVersion()
+    local channel = getChannel()
+    if channel == "WHISPER" then return end
+    N.SendRaw("VER" .. MSG_SEP .. tostring(RM.VERSION_NUM))
+end
+
+-- Notificar que este jugador libero su slot de puntero
+function N.SendPointerRelease()
+    if RM.state.myPointerSlot then
+        local slot = RM.state.pointerSlots[RM.state.myPointerSlot]
+        N.SendRaw("PTR_REL" .. MSG_SEP .. slot.color)
+    end
+end
+
+-- Notificar que este jugador tomo un slot de puntero
+function N.SendPointerClaim(colorName)
+    N.SendRaw("PTR_CLAIM" .. MSG_SEP .. colorName)
 end
 
 -- Pedir sincronizacion al RL (cualquiera puede pedirlo)
@@ -182,9 +228,59 @@ function N.OnReceive(msg, channel, sender)
         end
 
     -- -- PERMS ---------------------------------------------------
+        -- -- PERMS ---------------------------------------------------
     elseif cmd == "PERMS" then
         if not RM.Permissions.SenderIsRL(sender) then return end
         RM.state.assistCanMove = (parts[2] == "1")
         RM.MapFrame.UpdateAssistBtn()
+
+    -- -- VER (version check) ------------------------------------
+    elseif cmd == "VER" then
+        local theirVer = tonumber(parts[2]) or 0
+        if theirVer > RM.VERSION_NUM then
+            local msg = "ALERTA: " .. sender .. " tiene RaidMark v?" ..
+                        parts[2] .. " (tu tienes v" .. RM.VERSION ..
+                        "). Actualiza en github o contacta a 'holle'."
+            if RM.MapFrame and RM.MapFrame.ConsoleMsg then
+                RM.MapFrame.ConsoleMsg(msg, 1, 0.4, 0.1)
+            end
+        end
+
+    -- -- PTR (posicion de puntero remoto) -----------------------
+    elseif cmd == "PTR" then
+        local colorName = parts[2]
+        local px        = tonumber(parts[3])
+        local py        = tonumber(parts[4])
+        if colorName and px and py then
+            if RM.MapFrame and RM.MapFrame.AddRemotePointerDot then
+                RM.MapFrame.AddRemotePointerDot(sender, colorName, px, py)
+            end
+        end
+
+    -- -- PTR_CLAIM (alguien tomo un slot) -----------------------
+    elseif cmd == "PTR_CLAIM" then
+        local colorName = parts[2]
+        for i, slot in ipairs(RM.state.pointerSlots) do
+            if slot.color == colorName and not slot.owner then
+                slot.owner = sender
+                if RM.MapFrame and RM.MapFrame.UpdatePointerSlotUI then
+                    RM.MapFrame.UpdatePointerSlotUI()
+                end
+                break
+            end
+        end
+
+    -- -- PTR_REL (alguien libero su slot) -----------------------
+    elseif cmd == "PTR_REL" then
+        local colorName = parts[2]
+        for i, slot in ipairs(RM.state.pointerSlots) do
+            if slot.color == colorName and slot.owner == sender then
+                slot.owner = nil
+                if RM.MapFrame and RM.MapFrame.UpdatePointerSlotUI then
+                    RM.MapFrame.UpdatePointerSlotUI()
+                end
+                break
+            end
+        end
     end
 end
