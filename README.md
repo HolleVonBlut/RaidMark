@@ -30,15 +30,8 @@ Esto abre o cierra la ventana de RaidMark, la cual puedes mover libremente.
 ### Seleccionar el Encuentro
 Usa el menú desplegable en la esquina superior izquierda de la toolbar para elegir el mapa.  
 **Mapas disponibles:**
-* Profeta Skeram
-* Bug Trio (Yauj, Vem, Kri)
-* Sartura
-* Fankriss el Incansable
-* Viscidus
-* Princesa Huhuran
-* Señor Ouro
-* Twin Emperors
-* C'Thun (Sala Exterior y Estómago)
+* todo AQ40
+* todo Naxxramas
 
 ## 📍 Gestión de Íconos
 El panel derecho organiza los íconos en tres categorías principales:
@@ -58,15 +51,13 @@ El panel derecho organiza los íconos en tres categorías principales:
 ### Botones de la Toolbar
 * `[ v Encounter ]`: Selección de mapa del encuentro.
 * `[ Limpiar ]`: Elimina todos los iconos del mapa de una sola vez.
-* `[ Sync ]`: Solicita al RL el estado actual del mapa (útil al reconectar).
+* `[ Punteros]`: gestiona punteros por RED utiles para explicaciones, El RL tiene asegurado un puntero(rojo), los demas asistentes podran usar 3 punteros adicionales.
+* `[ Sync ]`: Solicita al RL el estado actual del mapa (útil al reconectar) tambien sirve (solo si eres RL) para limpiar todos los slots de punteros de los asistentes.
 * `[ Assist: ON/OFF ]`: Habilita que los asistentes puedan mover íconos.
-* `[ X Cerrar ]`: Cierra la ventana de RaidMark.
+* `[ Grid ]`: Habilita una rejilla de manera local para la facil ubicacion de iconos en el lienzo.
 
 ### Comandos de Chat
 * `/rm`: Abre o cierra la ventana.
-* `/rm map <key>`: Cambia el mapa directamente (Ej: `/rm map skeram`).
-* `/rm clear`: Limpia todos los íconos del mapa.
-* `/rm assist on/off`: Controla si los asistentes tienen permiso para mover iconos.
 
 ## 🛡 Sistema de Permisos y Red
 * **Raid Leader:** Control total sobre mapas, iconos y permisos.
@@ -74,10 +65,11 @@ El panel derecho organiza los íconos en tres categorías principales:
 * **Miembro:** Solo visualización; no puede interactuar con el mapa.
 
 La transmisión se realiza por el canal de raid/party con un sistema de seguridad para evitar lag.
+IMPORTANTE: El puntero funciona por red a travez de interpolacion, requiere que no muevas tan rapido el mouse o los receptores veran "saltos" en el rastro del puntero.
 
 ## ❓ Solución de Problemas
-* **Mapas en negro:** Borra el archivo `Cache.md5` en la carpeta de personaje dentro de `WTF`.
-* **No funciona:** El addon requiere estar en un grupo o raid para sincronizar.
+* **Mapas en negro:** Borra el archivo `Cache.md5` dentro de la carpeta de tu personaje.
+* **No funciona:** El addon requiere estar en un grupo o raid para sincronizar y ser usado.
 * **No aparece en la lista:** Verifica que la carpeta se llame exactamente `RaidMark`.
 
 ---
