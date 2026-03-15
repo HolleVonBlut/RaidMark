@@ -55,6 +55,7 @@ El panel derecho organiza los íconos en tres categorías principales:
 * `[ Sync ]`: Solicita al RL el estado actual del mapa (útil al reconectar) tambien sirve (solo si eres RL) para limpiar todos los slots de punteros de los asistentes.
 * `[ Assist: ON/OFF ]`: Habilita que los asistentes puedan mover íconos.
 * `[ Grid ]`: Habilita una rejilla de manera local para la facil ubicacion de iconos en el lienzo.
+* `[ Scale ]`: Boton ciclico para alternar entre "100%, 90%, 80% de escala" útil para jugadores con resoluciones menores a 1080p.
 
 ### Comandos de Chat
 * `/rm`: Abre o cierra la ventana.
@@ -65,7 +66,8 @@ El panel derecho organiza los íconos en tres categorías principales:
 * **Miembro:** Solo visualización; no puede interactuar con el mapa.
 
 La transmisión se realiza por el canal de raid/party con un sistema de seguridad para evitar lag.
-IMPORTANTE: El puntero funciona por red a travez de interpolacion, requiere que no muevas tan rapido el mouse o los receptores veran "saltos" en el rastro del puntero.
+
+## IMPORTANTE: El puntero funciona por red a travez de interpolacion, requiere que no muevas tan rapido el mouse o los receptores veran "saltos" en el rastro del puntero.
 
 ## ❓ Solución de Problemas
 * **Mapas en negro:** Borra el archivo `Cache.md5` dentro de la carpeta de tu personaje.
