@@ -7,8 +7,8 @@ RaidMark = {}
 local RM = RaidMark
 
 -- -- Version del protocolo de red --------------------------------
-RM.VERSION      = "0.59"
-RM.VERSION_NUM  = 2        -- numero entero para comparar (aumentar con cada release)
+RM.VERSION      = "0.60"
+RM.VERSION_NUM  = 3        -- numero entero para comparar (aumentar con cada release)
 RM.ADDON_PREFIX = "RaidMark"
 
 -- -- Estado global -----------------------------------------------
@@ -18,13 +18,14 @@ RM.state = {
     nextIconId    = 1,
     assistCanMove = false,
     mapVisible    = false,
+    currentScale  = 1.0,
 
     -- Puntero: slots de color { owner=nombre o nil, color="RED"|"BLUE"|"GREEN"|"YELLOW" }
-    pointerSlots = {
-        { color = "RED",    r=1,   g=0.1, b=0.1, owner=nil },  -- Slot 1: solo RL
-        { color = "BLUE",   r=0.3, g=0.5, b=1,   owner=nil },
-        { color = "GREEN",  r=0.2, g=0.9, b=0.2, owner=nil },
-        { color = "YELLOW", r=1,   g=0.9, b=0.1, owner=nil },
+pointerSlots = {
+        { color = "RED",    r=1,   g=0.1, b=0.1, owner=nil, lastX=nil, lastY=nil },
+        { color = "BLUE",   r=0.3, g=0.5, b=1,   owner=nil, lastX=nil, lastY=nil },
+        { color = "GREEN",  r=0.2, g=0.9, b=0.2, owner=nil, lastX=nil, lastY=nil },
+        { color = "YELLOW", r=1,   g=0.9, b=0.1, owner=nil, lastX=nil, lastY=nil },
     },
     myPointerSlot   = nil,    -- indice 1-4 que tiene este jugador, nil si ninguno
     pointerActive   = false,  -- si el modo puntero esta activo localmente
@@ -137,6 +138,7 @@ eventFrame:SetScript("OnEvent", function()
     elseif event == "RAID_ROSTER_UPDATE" or
            event == "PARTY_MEMBERS_CHANGED" then
         RM.Roster.Rebuild()
+        RM.ValidatePointerSlots()
 
     elseif event == "CHAT_MSG_ADDON" then
         -- arg1=prefix, arg2=msg, arg3=channel, arg4=sender
@@ -192,6 +194,57 @@ function RM.NextId()
     RM.state.nextIconId = id + 1
     return id
 end
+
+
+-- Validar slots de puntero contra el roster actual
+function RM.ValidatePointerSlots()
+    local myName = UnitName("player")
+    local changed = false
+
+    local function isInRaid(name)
+        if GetNumRaidMembers() > 0 then
+            for i = 1, 40 do
+                local n = GetRaidRosterInfo(i)
+                if n == name then return true end
+            end
+        else
+            if UnitName("player") == name then return true end
+            for i = 1, GetNumPartyMembers() do
+                if UnitName("party"..i) == name then return true end
+            end
+        end
+        return false
+    end
+
+    for i, slot in ipairs(RM.state.pointerSlots) do
+        if slot.owner and not isInRaid(slot.owner) then
+            slot.owner = nil
+            changed = true
+            -- Si era mi slot, desactivar localmente
+            if RM.state.myPointerSlot == i then
+                if RM.MapFrame and RM.MapFrame.SetPointerActive then
+                    RM.MapFrame.SetPointerActive(false)
+                end
+            end
+        end
+    end
+
+    -- Verificar que yo aun tengo el rango correcto para mi slot
+    local mySlot = RM.state.myPointerSlot
+    if mySlot == 1 and not RM.Permissions.IsRL() then
+        RM.state.pointerSlots[1].owner = nil
+        if RM.MapFrame and RM.MapFrame.SetPointerActive then
+            RM.MapFrame.SetPointerActive(false)
+        end
+        changed = true
+    end
+
+    if changed and RM.MapFrame and RM.MapFrame.UpdatePointerSlotUI then
+        RM.MapFrame.UpdatePointerSlotUI()
+    end
+end
+
+
 
 -- Limpia todo el estado de iconos
 function RM.ClearAll()

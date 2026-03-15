@@ -136,6 +136,11 @@ function N.SendPointerClaim(colorName)
     N.SendRaw("PTR_CLAIM" .. MSG_SEP .. colorName)
 end
 
+-- RL limpia todos los slots de asistentes
+function N.SendPointerClear()
+    N.SendRaw("PTR_CLEAR")
+end
+
 -- Pedir sincronizacion al RL (cualquiera puede pedirlo)
 function N.SendSyncRequest()
     N.SendRaw("SYNC_REQ")
@@ -271,16 +276,35 @@ function N.OnReceive(msg, channel, sender)
         end
 
     -- -- PTR_REL (alguien libero su slot) -----------------------
-    elseif cmd == "PTR_REL" then
+elseif cmd == "PTR_REL" then
         local colorName = parts[2]
         for i, slot in ipairs(RM.state.pointerSlots) do
             if slot.color == colorName and slot.owner == sender then
                 slot.owner = nil
+                slot.lastX = nil -- AÑADIR ESTA
+                slot.lastY = nil -- AÑADIR ESTA
                 if RM.MapFrame and RM.MapFrame.UpdatePointerSlotUI then
                     RM.MapFrame.UpdatePointerSlotUI()
                 end
                 break
             end
+        end
+
+    -- -- PTR_CLEAR (RL limpia todos los slots de asistentes) ----
+    elseif cmd == "PTR_CLEAR" then
+        if not RM.Permissions.SenderIsRL(sender) then return end
+        for i = 2, 4 do
+            RM.state.pointerSlots[i].owner = nil
+        end
+        -- Si yo era asistente con slot, forzar desactivacion
+        local mySlot = RM.state.myPointerSlot
+        if mySlot and mySlot > 1 then
+            if RM.MapFrame and RM.MapFrame.SetPointerActive then
+                RM.MapFrame.SetPointerActive(false)
+            end
+        end
+        if RM.MapFrame and RM.MapFrame.UpdatePointerSlotUI then
+            RM.MapFrame.UpdatePointerSlotUI()
         end
     end
 end

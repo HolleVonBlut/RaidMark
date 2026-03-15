@@ -110,14 +110,14 @@ contentFrame:SetScript("OnMouseDown", function()
     local mLeft = contentFrame:GetLeft()
     local mTop  = contentFrame:GetTop()
     local mW    = contentFrame:GetWidth()
-    local mH    = contentFrame:GetHeight()
+local mH    = contentFrame:GetHeight()
     local cx, cy = GetCursorPosition()
-
-    -- Escala de UI
-    local scale = UIParent:GetScale()
+    
+    -- NUEVO: Lee la escala real y efectiva del mapa, no solo la de la interfaz global
+    local scale = contentFrame:GetEffectiveScale() 
+    
     cx = cx / scale
     cy = cy / scale
-
     local nx = (cx - mLeft) / mW
     local ny = (mTop - cy)  / mH
 
@@ -145,9 +145,12 @@ contentFrame:SetScript("OnMouseDown", function()
     local mLeft = contentFrame:GetLeft()
     local mTop  = contentFrame:GetTop()
     local mW    = contentFrame:GetWidth()
-    local mH    = contentFrame:GetHeight()
+local mH    = contentFrame:GetHeight()
     local cx, cy = GetCursorPosition()
-    local scale = UIParent:GetScale()
+    
+    -- NUEVO: Lee la escala real y efectiva del mapa, no solo la de la interfaz global
+    local scale = contentFrame:GetEffectiveScale() 
+    
     cx = cx / scale
     cy = cy / scale
     local nx = (cx - mLeft) / mW
@@ -267,13 +270,17 @@ MF.selectedMemberName = nil
 MF.allButtons         = {}
 
 -- Puntero local y remoto
-local localPointerFrame  = nil   -- frame que sigue al cursor (solo visible para el duenio)
-local localPointerX      = 0     -- ultima posicion normalizada X
-local localPointerY      = 0     -- ultima posicion normalizada Y
-local remotePointerPaths = {}    -- [sender] = { queue de hasta 5 frames }
-local POINTER_SIZE       = 24
-local POINTER_PATH_MAX   = 90
-local POINTER_PATH_TTL   = 2.0   -- segundos antes de que una sombra desaparezca
+local localPointerFrame      = nil
+local localPointerX          = 0
+local localPointerY          = 0
+local remotePointerPaths     = {}
+local lastPointerReceived    = {}   -- [colorName] = GetTime() del ultimo PTR recibido
+local POINTER_SIZE           = 24
+local POINTER_PATH_MAX       = 100
+local POINTER_PATH_TTL       = 2.0
+local POINTER_INACTIVITY_TTL = 10   -- segundos sin PTR para auto-liberar slot
+
+
 
 -- -- Frame de actualizacion del puntero local -------------------
 local pointerUpdateFrame = CreateFrame("Frame", "RaidMarkPointerUpdate")
@@ -292,10 +299,15 @@ pointerUpdateFrame:SetScript("OnUpdate", function()
     local mH    = contentFrame:GetHeight()
     if not mLeft then return end
 
-    local cx, cy = GetCursorPosition()
-    local scale  = UIParent:GetScale()
+local cx, cy = GetCursorPosition()
+    
+    -- NUEVO: Aplica la misma corrección al puntero visual
+    local scale  = contentFrame:GetEffectiveScale() 
+    
     cx = cx / scale
     cy = cy / scale
+
+    -- Solo mostrar si el cursor esta dentro del mapa
 
     -- Solo mostrar si el cursor esta dentro del mapa
     if cx < mLeft or cx > mLeft + mW or cy < mTop - mH or cy > mTop then
@@ -323,57 +335,35 @@ function MF.GetPointerPos()
     return nil, nil
 end
 
--- Agregar un punto de "camino" remoto en el mapa
-function MF.AddRemotePointerDot(sender, colorName, px, py)
-    if not remotePointerPaths[sender] then
-        remotePointerPaths[sender] = {}
-    end
-    local path = remotePointerPaths[sender]
-
-    -- Buscar color del slot
-    local sr, sg, sb = 0.8, 0.8, 0.8
-    for _, slot in ipairs(RM.state.pointerSlots) do
-        if slot.color == colorName then
-            sr, sg, sb = slot.r, slot.g, slot.b
-            break
-        end
-    end
-
-    -- Crear dot
-    local dot = CreateFrame("Frame", nil, contentFrame)
+-- Función auxiliar para crear físicamente el punto del rastro
+function MF.CreateShadowFrame(path, px, py, sr, sg, sb)
+    local dot = CreateFrame("Frame", nil, MF.contentFrame)
     dot:SetWidth(POINTER_SIZE)
     dot:SetHeight(POINTER_SIZE)
-    dot:SetFrameLevel(contentFrame:GetFrameLevel() + 3)
-    local mW = contentFrame:GetWidth()
-    local mH = contentFrame:GetHeight()
-    dot:SetPoint("CENTER", contentFrame, "TOPLEFT", px * mW, -py * mH)
+    dot:SetFrameLevel(MF.contentFrame:GetFrameLevel() + 3)
+    local mW = MF.contentFrame:GetWidth()
+    local mH = MF.contentFrame:GetHeight()
+    dot:SetPoint("CENTER", MF.contentFrame, "TOPLEFT", px * mW, -py * mH)
 
     local tex = dot:CreateTexture(nil, "ARTWORK")
     tex:SetAllPoints(dot)
     tex:SetTexture(RM.ICON_PATH .. "icon_circle_S")
-    tex:SetVertexColor(sr, sg, sb, 1.0)   -- relleno completo
+    tex:SetVertexColor(sr, sg, sb, 1.0)
 
-    dot.ttl      = POINTER_PATH_TTL
-    dot.elapsed  = 0
-
+    dot.ttl, dot.elapsed = POINTER_PATH_TTL, 0
     dot:SetScript("OnUpdate", function()
         dot.elapsed = dot.elapsed + arg1
         if dot.elapsed >= dot.ttl then
             dot:Hide()
             dot:SetScript("OnUpdate", nil)
         else
-            -- Fade out en el ultimo 30%
             local fade = dot.elapsed / dot.ttl
             if fade > 0.7 then
-                local a = (1 - fade) / 0.3
-                tex:SetVertexColor(sr, sg, sb, a)  -- 1.0 → 0
+                tex:SetVertexColor(sr, sg, sb, (1 - fade) / 0.3)
             end
         end
     end)
-
     table.insert(path, dot)
-
-    -- Si hay mas de 5, ocultar el mas antiguo
     if table.getn(path) > POINTER_PATH_MAX then
         local oldest = table.remove(path, 1)
         oldest:Hide()
@@ -381,57 +371,163 @@ function MF.AddRemotePointerDot(sender, colorName, px, py)
     end
 end
 
--- Mini consola dinamica con mensajes idle y prioridad
-local consolePriorityTimer  = 0      -- tiempo restante del mensaje prioritario
-local consoleIdleTimer      = 4      -- arranca en 4 para no mostrar idle de inmediato
-local consoleIdleIndex      = 1
-local CONSOLE_PRIORITY_TTL  = 5      -- segundos que dura un mensaje prioritario
-local CONSOLE_IDLE_INTERVAL = 4      -- segundos entre mensajes idle
+-- Nueva versión con interpolación para rastro unido
+function MF.AddRemotePointerDot(sender, colorName, px, py)
+    lastPointerReceived[colorName] = GetTime()
+    
+    local slot = nil
+    for _, s in ipairs(RM.state.pointerSlots) do
+        if s.color == colorName then slot = s; break end
+    end
+    if not slot then return end
 
-local consoleIdleMessages = {
-    { text = "RaidMark v" .. RM.VERSION,       r = 0.4, g = 0.7, b = 1.0 },
-    { text = "By Holle - South Seas Server",   r = 0.6, g = 0.6, b = 0.6 },
-}
+    if not remotePointerPaths[sender] then remotePointerPaths[sender] = {} end
+    local path = remotePointerPaths[sender]
 
-local function consoleShowIdle()
-    if not MF.consoleText then return end
-    local msg = consoleIdleMessages[consoleIdleIndex]
-    MF.consoleText:SetText(msg.text)
-    MF.consoleText:SetTextColor(msg.r, msg.g, msg.b, 1)
-    consoleIdleIndex = math.mod(consoleIdleIndex, table.getn(consoleIdleMessages)) + 1
+    -- Lógica de Interpolación:
+    local stepSize = 0.012  -- Densidad del rastro (menor = más sólido)
+    local lastX = slot.lastX or px
+    local lastY = slot.lastY or py
+    
+    local dx = px - lastX
+    local dy = py - lastY
+    local dist = math.sqrt(dx*dx + dy*dy)
+
+    -- Si el movimiento es normal (menor al 25% del mapa), rellenamos el hueco
+    if dist > 0 and dist < 0.25 then
+        local steps = math.floor(dist / stepSize)
+        if steps > 0 then
+            for i = 1, steps do
+                local t = i / steps
+                MF.CreateShadowFrame(path, lastX + dx*t, lastY + dy*t, slot.r, slot.g, slot.b)
+            end
+        else
+            MF.CreateShadowFrame(path, px, py, slot.r, slot.g, slot.b)
+        end
+    else
+        MF.CreateShadowFrame(path, px, py, slot.r, slot.g, slot.b)
+    end
+
+    -- Guardamos la posición actual para el próximo cálculo
+    slot.lastX, slot.lastY = px, py
 end
 
--- Mensaje prioritario: interrumpe el idle y dura 5 segundos
+-- Mini consola dinamica con fade in/out entre mensajes idle
+local consolePriorityTimer = 0
+local consoleIdleIndex     = 1
+local CONSOLE_PRIORITY_TTL = 5
+local CONSOLE_SHOW_TIME    = 3.5   -- segundos visible cada mensaje
+local CONSOLE_FADE_SPEED   = 2.0   -- alpha por segundo
+
+local consoleFadeDir    = 0    -- 0=visible, 1=fade out, -1=fade in
+local consoleFadeAlpha  = 1.0
+local consoleShowTimer  = CONSOLE_SHOW_TIME
+local consoleCurrentMsg = nil  -- { text, r, g, b }
+
+local consoleIdleMessages = {
+    { text = "RaidMark v" .. RM.VERSION,              r = 0.4, g = 0.7, b = 1.0 },
+    { text = "By Holle - South Seas Server",           r = 0.5, g = 0.5, b = 0.5 },
+    { text = "Puntero: activa check, mueve sin click", r = 0.8, g = 0.8, b = 0.3 },
+    { text = "Sync (RL): limpia slots de puntero",     r = 0.3, g = 1.0, b = 0.4 },
+}
+
+local function consoleApplyAlpha()
+    if not MF.consoleText or not consoleCurrentMsg then return end
+    MF.consoleText:SetTextColor(
+        consoleCurrentMsg.r, consoleCurrentMsg.g, consoleCurrentMsg.b, consoleFadeAlpha)
+end
+
+local function consoleNextIdle()
+    consoleCurrentMsg = consoleIdleMessages[consoleIdleIndex]
+    consoleIdleIndex = math.mod(consoleIdleIndex, table.getn(consoleIdleMessages)) + 1
+    if MF.consoleText then
+        MF.consoleText:SetText(consoleCurrentMsg.text)
+    end
+    consoleApplyAlpha()
+end
+
 function MF.ConsoleMsg(text, r, g, b)
     r = r or 0.7
     g = g or 0.9
     b = b or 1
     consolePriorityTimer = CONSOLE_PRIORITY_TTL
+    consoleFadeDir   = 0
+    consoleFadeAlpha = 1.0
+    consoleCurrentMsg = { text = text, r = r, g = g, b = b }
     if MF.consoleText then
         MF.consoleText:SetText(text)
         MF.consoleText:SetTextColor(r, g, b, 1)
     end
 end
 
--- OnUpdate de la consola (cicla entre mensajes idle cuando no hay prioridad)
+-- Detector de inactividad de punteros + fade de consola
+local INACTIVITY_CHECK = 0
 local consoleUpdateFrame = CreateFrame("Frame", "RaidMarkConsoleUpdate")
 consoleUpdateFrame:SetScript("OnUpdate", function()
     local dt = arg1
 
+    -- Detector de inactividad de slots de puntero
+    INACTIVITY_CHECK = INACTIVITY_CHECK + dt
+    if INACTIVITY_CHECK >= 2 then
+        INACTIVITY_CHECK = 0
+        local now = GetTime()
+        local changed = false
+        for i, slot in ipairs(RM.state.pointerSlots) do
+            if slot.owner and slot.owner ~= UnitName("player") then
+                local lastTime = lastPointerReceived[slot.color] or 0
+if lastTime > 0 and (now - lastTime) > POINTER_INACTIVITY_TTL then
+                    slot.owner = nil
+                    slot.lastX = nil -- Limpiar memoria de posición
+                    slot.lastY = nil -- Limpiar memoria de posición
+                    lastPointerReceived[slot.color] = nil
+                    changed = true
+                    if RM.state.myPointerSlot == i then
+                        if MF.SetPointerActive then MF.SetPointerActive(false) end
+                    end
+                end
+            end
+        end
+        if changed then MF.UpdatePointerSlotUI() end
+    end
+
+    -- Fade de consola
     if consolePriorityTimer > 0 then
         consolePriorityTimer = consolePriorityTimer - dt
         if consolePriorityTimer <= 0 then
             consolePriorityTimer = 0
-            consoleIdleTimer     = 0   -- fuerza mostrar idle inmediatamente
+            consoleFadeDir   = -1
+            consoleFadeAlpha = 0
+            consoleNextIdle()
+            consoleShowTimer = CONSOLE_SHOW_TIME
         end
         return
     end
 
-    -- Sin mensaje prioritario: ciclar idle
-    consoleIdleTimer = consoleIdleTimer - dt
-    if consoleIdleTimer <= 0 then
-        consoleIdleTimer = CONSOLE_IDLE_INTERVAL
-        consoleShowIdle()
+    if not MF.consoleText then return end
+
+    if consoleFadeDir == 0 then
+        consoleShowTimer = consoleShowTimer - dt
+        if consoleShowTimer <= 0 then
+            consoleFadeDir = 1  -- empieza fade out
+        end
+
+    elseif consoleFadeDir == 1 then
+        consoleFadeAlpha = consoleFadeAlpha - CONSOLE_FADE_SPEED * dt
+        if consoleFadeAlpha <= 0 then
+            consoleFadeAlpha = 0
+            consoleFadeDir   = -1  -- empieza fade in del siguiente
+            consoleNextIdle()
+        end
+        consoleApplyAlpha()
+
+    elseif consoleFadeDir == -1 then
+        consoleFadeAlpha = consoleFadeAlpha + CONSOLE_FADE_SPEED * dt
+        if consoleFadeAlpha >= 1 then
+            consoleFadeAlpha = 1
+            consoleFadeDir   = 0
+            consoleShowTimer = CONSOLE_SHOW_TIME
+        end
+        consoleApplyAlpha()
     end
 end)
 
@@ -865,6 +961,16 @@ local function buildToolbar()
     syncBtn:SetPoint("LEFT", toolbar, "LEFT", xOff, 0)
     syncBtn:SetScript("OnClick", function()
         RM.Network.SendSyncRequest()
+        -- Si soy RL: limpiar slots de asistentes + refresh roster
+        if RM.Permissions.IsRL() then
+            for i = 2, 4 do
+                RM.state.pointerSlots[i].owner = nil
+            end
+            RM.Network.SendPointerClear()
+            RM.Roster.Rebuild()
+            MF.UpdatePointerSlotUI()
+            MF.ConsoleMsg("Slots PTR limpiados. Roster actualizado.", 0.4, 1, 0.5)
+        end
     end)
     syncBtn:SetScript("OnEnter", function()
         GameTooltip:SetOwner(syncBtn, "ANCHOR_BOTTOM")
@@ -977,6 +1083,22 @@ local function buildToolbar()
     ptrCheck:EnableMouse(true)
     xOff = xOff + 28
 
+    -- Funcion publica para forzar desactivacion desde exterior (RAID_ROSTER_UPDATE, PTR_CLEAR, timeout)
+    MF.SetPointerActive = function(active)
+        if active then return end  -- solo se llama con false (forzar desactivacion)
+        local prevSlot = RM.state.myPointerSlot
+        if prevSlot then
+            RM.state.pointerSlots[prevSlot].owner = nil
+        end
+        RM.state.pointerActive = false
+        RM.state.myPointerSlot = nil
+        ptrCheckMark:Hide()
+        ptrCheck:SetBackdropBorderColor(0.5, 0.42, 0.22, 0.9)
+        if localPointerFrame then localPointerFrame:Hide() end
+        MF.ConsoleMsg("Puntero liberado.", 1, 0.7, 0.3)
+        MF.UpdatePointerSlotUI()
+    end
+
     -- 4 indicadores de slot de color
     MF.slotIndicators = {}
     local SLOT_SZ = 16
@@ -1003,6 +1125,7 @@ local function buildToolbar()
     consoleFrame:SetWidth(consoleW)
     consoleFrame:SetHeight(TOOLBAR_H - 10)
     consoleFrame:SetPoint("LEFT", toolbar, "LEFT", xOff, 0)
+    -- SetClipsChildren no disponible en vanilla 1.12
     consoleFrame:SetBackdrop({
         bgFile   = "Interface\\DialogFrame\\UI-DialogBox-Background",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -1011,15 +1134,17 @@ local function buildToolbar()
     })
     consoleFrame:SetBackdropColor(0.04, 0.07, 0.15, 0.97)
     consoleFrame:SetBackdropBorderColor(0.2, 0.4, 0.9, 0.9)
+    MF.consoleFrame = consoleFrame   -- exponer para el OnUpdate
 
     MF.consoleText = consoleFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    MF.consoleText:SetPoint("TOPLEFT", consoleFrame, "TOPLEFT", 5, -5)
-    MF.consoleText:SetPoint("BOTTOMRIGHT", consoleFrame, "BOTTOMRIGHT", -5, 5)
+    MF.consoleText:SetPoint("TOPLEFT",     consoleFrame, "TOPLEFT",     5,  -5)
+    MF.consoleText:SetPoint("BOTTOMRIGHT", consoleFrame, "BOTTOMRIGHT", -5,  5)
     MF.consoleText:SetJustifyH("LEFT")
-    MF.consoleText:SetJustifyV("TOP")
+    MF.consoleText:SetJustifyV("MIDDLE")
     BigFont(MF.consoleText, 9)
-    MF.consoleText:SetText("RaidMark v" .. RM.VERSION .. " OK")
-    MF.consoleText:SetTextColor(0.5, 0.8, 1, 1)
+    MF.consoleText:SetText("RaidMark v" .. RM.VERSION)
+    MF.consoleText:SetTextColor(0.4, 0.7, 1, 1)
+    consoleCurrentMsg = { text = "RaidMark v" .. RM.VERSION, r = 0.4, g = 0.7, b = 1.0 }
 
     -- [Grid] -- cuadricula local con sliders de opacidad y densidad
 
@@ -1165,6 +1290,46 @@ function MF.UpdateAssistBtn()
         MF.assistBtn:SetBackdropBorderColor(0.5, 0.42, 0.22, 0.9)
     end
 end
+
+
+-- Crear el botón de Escala en la Toolbar
+MF.scaleBtn = CreateFrame("Button", nil, mainFrame)
+MF.scaleBtn:SetWidth(80)
+MF.scaleBtn:SetHeight(24)
+-- Ajusta el SetPoint según dónde estén tus otros botones (ej. al lado del botón de Assist)
+MF.scaleBtn:SetPoint("TOPRIGHT", mainFrame, "TOPRIGHT", -120, -12) 
+MF.scaleBtn:SetBackdrop({
+    bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+    edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+    tile = true, tileSize = 16, edgeSize = 16,
+    insets = { left = 4, right = 4, top = 4, bottom = 4 }
+})
+MF.scaleBtn:SetBackdropColor(0.1, 0.1, 0.1, 0.9)
+
+MF.scaleBtn.labelText = MF.scaleBtn:CreateFontString(nil, "OVERLAY")
+BigFont(MF.scaleBtn.labelText, 12)
+MF.scaleBtn.labelText:SetPoint("CENTER", 0, 0)
+MF.scaleBtn.labelText:SetText("Scale: 100%")
+MF.scaleBtn.labelText:SetTextColor(1, 0.8, 0, 1)
+
+MF.scaleBtn:SetScript("OnClick", function()
+    -- Lógica cíclica: 1.0 -> 0.9 -> 0.8 -> 1.0
+    if RM.state.currentScale == 1.0 then
+        RM.state.currentScale = 0.9
+        MF.scaleBtn.labelText:SetText("Scale: 90%")
+    elseif RM.state.currentScale == 0.9 then
+        RM.state.currentScale = 0.8
+        MF.scaleBtn.labelText:SetText("Scale: 80%")
+    else
+        RM.state.currentScale = 1.0
+        MF.scaleBtn.labelText:SetText("Scale: 100%")
+    end
+    
+    -- Aplicar la escala a todo el marco principal
+    mainFrame:SetScale(RM.state.currentScale)
+end)
+
+
 
 -- -- Cargar textura del mapa --------------------------------------
 function MF.LoadMap(mapKey)
