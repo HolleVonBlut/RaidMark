@@ -103,6 +103,9 @@ MF.contentFrame = contentFrame
 
 -- Click en el mapa para colocar el icono seleccionado
 contentFrame:SetScript("OnMouseDown", function()
+    -- SEGURO: Prioridad absoluta al puntero. Si ALT está pulsado, no colocar icono.
+    if IsAltKeyDown() then return end
+    
     if arg1 ~= "LeftButton" then return end
     if not RM.Permissions.CanPlace() then return end
     if not MF.selectedIconType then return end
@@ -136,6 +139,9 @@ end)
 
 -- Pausar puntero cuando se presiona cualquier boton del mouse sobre el mapa
 contentFrame:SetScript("OnMouseDown", function()
+
+if IsAltKeyDown() then return end
+
     RM.state.pointerMouseBtn = true
     -- logica original de colocar iconos
     if arg1 ~= "LeftButton" then return end
@@ -566,12 +572,14 @@ local function buildRoleButtons()
     lbl:SetTextColor(1, 0.9, 0.4, 1)
 
     for _, def in ipairs(ROLE_BUTTONS) do
-        -- Tooltip label debajo del icono
-        local tipLbl = sidePanel:CreateFontString(nil,"OVERLAY","GameFontNormalSmall")
-        tipLbl:SetPoint("TOPLEFT", sidePanel, "TOPLEFT", def.x, def.y - ICON_BTN - 1)
-        tipLbl:SetWidth(ICON_BTN)
-        tipLbl:SetText(def.label)
-        tipLbl:SetTextColor(0.8, 0.8, 0.6, 1)
+-- Tooltip label debajo del icono (DESACTIVADO)
+    --[[
+    local tipLbl = sidePanel:CreateFontString(nil,"OVERLAY","GameFontNormalSmall")
+    tipLbl:SetPoint("TOPLEFT", sidePanel, "TOPLEFT", def.x, def.y - ICON_BTN - 1)
+    tipLbl:SetWidth(ICON_BTN)
+    tipLbl:SetText(def.label)
+    tipLbl:SetTextColor(0.8, 0.8, 0.6, 1)
+    --]]
         local btn = makeIconButton(
             sidePanel, def.type,
             RM.ICON_TEXTURE[def.type],
@@ -588,12 +596,14 @@ local function buildRoleButtons()
     lbl2:SetTextColor(1, 0.9, 0.4, 1)
 
     for _, def in ipairs(CIRCLE_BUTTONS) do
-        local tipLbl = sidePanel:CreateFontString(nil,"OVERLAY","GameFontNormalSmall")
-        BigFont(tipLbl, 10)
-        tipLbl:SetPoint("TOPLEFT", sidePanel, "TOPLEFT", def.x, def.y - ICON_BTN - 1)
-        tipLbl:SetWidth(ICON_BTN)
-        tipLbl:SetText(def.label)
-        tipLbl:SetTextColor(0.8, 0.8, 0.6, 1)
+--[[
+    local tipLbl = sidePanel:CreateFontString(nil,"OVERLAY","GameFontNormalSmall")
+    if BigFont then BigFont(tipLbl, 10) end -- Solo si existe en ese bloque
+    tipLbl:SetPoint("TOPLEFT", sidePanel, "TOPLEFT", def.x, def.y - ICON_BTN - 1)
+    tipLbl:SetWidth(ICON_BTN)
+    tipLbl:SetText(def.label)
+    tipLbl:SetTextColor(0.8, 0.8, 0.6, 1)
+    --]]
         local btn = makeIconButton(
             sidePanel, def.type,
             RM.ICON_TEXTURE[def.type],
@@ -610,12 +620,14 @@ local function buildRoleButtons()
     lbl4:SetTextColor(1, 0.9, 0.4, 1)
 
     for _, def in ipairs(SKULL_BUTTONS) do
-        local tipLbl = sidePanel:CreateFontString(nil,"OVERLAY","GameFontNormalSmall")
-        BigFont(tipLbl, 10)
-        tipLbl:SetPoint("TOPLEFT", sidePanel, "TOPLEFT", def.x, def.y - ICON_BTN - 1)
-        tipLbl:SetWidth(ICON_BTN)
-        tipLbl:SetText(def.label)
-        tipLbl:SetTextColor(0.8, 0.8, 0.6, 1)
+--[[
+    local tipLbl = sidePanel:CreateFontString(nil,"OVERLAY","GameFontNormalSmall")
+    if BigFont then BigFont(tipLbl, 10) end -- Solo si existe en ese bloque
+    tipLbl:SetPoint("TOPLEFT", sidePanel, "TOPLEFT", def.x, def.y - ICON_BTN - 1)
+    tipLbl:SetWidth(ICON_BTN)
+    tipLbl:SetText(def.label)
+    tipLbl:SetTextColor(0.8, 0.8, 0.6, 1)
+    --]]
         local btn = makeIconButton(
             sidePanel, def.type,
             RM.ICON_TEXTURE[def.type],
@@ -670,10 +682,10 @@ divider:SetHeight(1)
 divider:SetPoint("TOPLEFT", sidePanel, "TOPLEFT", 8, MEMBER_PANEL_Y - 4)
 divider:SetTexture(0.4, 0.35, 0.2, 0.6)
 
-local memberLabel = sidePanel:CreateFontString(nil,"OVERLAY","GameFontNormalSmall")
-memberLabel:SetPoint("TOPLEFT", sidePanel, "TOPLEFT", 8, MEMBER_PANEL_Y - 10)
-memberLabel:SetText("Miembros del Raid")
- memberLabel:SetTextColor(0.8, 0.67, 0.27, 1)
+-- local memberLabel = sidePanel:CreateFontString(nil,"OVERLAY","GameFontNormalSmall")
+    -- memberLabel:SetPoint("TOPLEFT", sidePanel, "TOPLEFT", 8, MEMBER_PANEL_Y - 10)
+    -- memberLabel:SetText("Miembros del Raid")
+    -- memberLabel:SetTextColor(0.8, 0.67, 0.27, 1)
 
 -- Botones de miembros (se reconstruyen con el roster)
 local memberButtons = {}
@@ -687,69 +699,73 @@ function MF.RebuildRosterButtons()
 
     local members = RM.Roster.GetSortedList()
     local totalH  = 0
+    local visibleIndex = 1
 
     for i, data in ipairs(members) do
-        local yOff = -(i-1) * (MEMBER_BTN_H + 2)
+        -- FILTRO: Solo crear el botón si NO está en el mapa
+        if not RM.Icons.IsPlayerPlaced(data.name) then
+            local yOff = -(visibleIndex-1) * (MEMBER_BTN_H + 2)
 
-        local btn = CreateFrame("Button", nil, memberContent)
-        btn:SetWidth(MEMBER_BTN_W)
-        btn:SetHeight(MEMBER_BTN_H)
-        btn:SetPoint("TOPLEFT", memberContent, "TOPLEFT", 0, yOff)
+            local btn = CreateFrame("Button", nil, memberContent)
+            btn:SetWidth(MEMBER_BTN_W)
+            btn:SetHeight(MEMBER_BTN_H)
+            btn:SetPoint("TOPLEFT", memberContent, "TOPLEFT", 0, yOff)
 
-        -- Fondo
-        local fbg = btn:CreateTexture(nil, "BACKGROUND")
-        fbg:SetAllPoints(btn)
-        local r,g,b = RM.Roster.GetColor(data.classFile)
-        fbg:SetTexture(r*0.3, g*0.3, b*0.3, 0.7)
+            -- Fondo
+            local fbg = btn:CreateTexture(nil, "BACKGROUND")
+            fbg:SetAllPoints(btn)
+            local r,g,b = RM.Roster.GetColor(data.classFile)
+            fbg:SetTexture(r*0.3, g*0.3, b*0.3, 0.7)
 
-        -- Icono de clase pequeno
-        local icn = btn:CreateTexture(nil, "ARTWORK")
-        icn:SetWidth(16)
-        icn:SetHeight(16)
-        icn:SetPoint("LEFT", btn, "LEFT", 2, 0)
-        icn:SetTexture(RM.Roster.GetTexturePath(data.classFile))
+            -- Icono de clase pequeno
+            local icn = btn:CreateTexture(nil, "ARTWORK")
+            icn:SetWidth(16)
+            icn:SetHeight(16)
+            icn:SetPoint("LEFT", btn, "LEFT", 2, 0)
+            icn:SetTexture(RM.Roster.GetTexturePath(data.classFile))
 
-        -- Nombre
-        local nm = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        BigFont(nm, 10)
-        nm:SetPoint("LEFT", btn, "LEFT", 22, 0)
-        nm:SetText(data.name)
-        nm:SetTextColor(r, g, b, 1)
+            -- Nombre
+            local nm = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            BigFont(nm, 10)
+            nm:SetPoint("LEFT", btn, "LEFT", 22, 0)
+            nm:SetText(data.name)
+            nm:SetTextColor(r, g, b, 1)
 
-        -- Highlight
-        local hl = btn:CreateTexture(nil, "HIGHLIGHT")
-        hl:SetAllPoints(btn)
-        hl:SetTexture(1, 1, 1, 0.15)
+            -- Highlight
+            local hl = btn:CreateTexture(nil, "HIGHLIGHT")
+            hl:SetAllPoints(btn)
+            hl:SetTexture(1, 1, 1, 0.15)
 
-        btn:EnableMouse(true)
+            btn:EnableMouse(true)
 
-        -- Captura local para evitar el bug de closure en Lua 5.0
-        local memberName      = data.name
-        local memberClassFile = data.classFile
+            -- Captura local para evitar el bug de closure en Lua 5.0
+            local memberName      = data.name
+            local memberClassFile = data.classFile
 
-        btn:SetScript("OnClick", function()
-            MF.selectedIconType   = "MEMBER_" .. memberClassFile
-            MF.selectedMemberName = memberName
-            RM.ICON_TEXTURE["MEMBER_" .. memberClassFile] =
-                RM.Roster.GetTexturePath(memberClassFile)
-            RM.ICON_SIZE["MEMBER_" .. memberClassFile] = 24
-            MF.HighlightSelected(btn)
-        end)
+            btn:SetScript("OnClick", function()
+                MF.selectedIconType   = "MEMBER_" .. memberClassFile
+                MF.selectedMemberName = memberName
+                RM.ICON_TEXTURE["MEMBER_" .. memberClassFile] =
+                    RM.Roster.GetTexturePath(memberClassFile)
+                RM.ICON_SIZE["MEMBER_" .. memberClassFile] = 24
+                MF.HighlightSelected(btn)
+            end)
 
-        btn:SetScript("OnEnter", function()
-            GameTooltip:SetOwner(btn, "ANCHOR_LEFT")
-            GameTooltip:SetText("Colocar: " .. memberName)
-            GameTooltip:Show()
-        end)
-        btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+            btn:SetScript("OnEnter", function()
+                GameTooltip:SetOwner(btn, "ANCHOR_LEFT")
+                GameTooltip:SetText("Colocar: " .. memberName)
+                GameTooltip:Show()
+            end)
+            btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-        table.insert(memberButtons, btn)
-        totalH = totalH + MEMBER_BTN_H + 2
+            table.insert(memberButtons, btn)
+            totalH = totalH + MEMBER_BTN_H + 2
+            visibleIndex = visibleIndex + 1
+        end
     end
 
     memberContent:SetHeight(math.max(1, totalH))
 end
-
 -- -- Highlight del boton seleccionado ----------------------------
 MF.lastSelectedBtn = nil
 
@@ -955,31 +971,41 @@ local function buildToolbar()
     clearBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
     xOff = xOff + 108
 
-    -- [Sync] -- visible para todos, pide estado al RL
+-- [Sync] -- visible para todos, pide estado al RL
     local syncBtn = makeToolbarBtn("Sync", 80)
     syncBtn.labelText:SetTextColor(0.4, 0.8, 1, 1)
     syncBtn:SetPoint("LEFT", toolbar, "LEFT", xOff, 0)
     syncBtn:SetScript("OnClick", function()
-        RM.Network.SendSyncRequest()
-        -- Si soy RL: limpiar slots de asistentes + refresh roster
         if RM.Permissions.IsRL() then
-            for i = 2, 4 do
-                RM.state.pointerSlots[i].owner = nil
-            end
-            RM.Network.SendPointerClear()
+            -- Rebuild fresco desde API de WoW
             RM.Roster.Rebuild()
-            MF.UpdatePointerSlotUI()
-            MF.ConsoleMsg("Slots PTR limpiados. Roster actualizado.", 0.4, 1, 0.5)
+            
+            -- LIMPIEZA DE FANTASMAS: Si están en el mapa pero ya no en la raid
+            if RM.Roster.members then
+                for iconId, data in pairs(RM.state.placedIcons) do
+                    -- Si tiene label, es un miembro
+                    if data.label and data.label ~= "" and not RM.Roster.members[data.label] then
+                        RM.Icons.ApplyRemove(iconId)
+                        RM.Network.SendRemove(iconId)
+                    end
+                end
+            end
+
+            -- Enviar estado del mapa + permisos
+            RM.Network.SendSyncResponse()
+            -- Enviar roster actualizado
+            RM.Network.SendRosterSync()
+            DEFAULT_CHAT_FRAME:AddMessage("RaidMark: Roster y estado sincronizados.")
+        else
+            -- Si no soy RL, pedir al RL
+            RM.Network.SendSyncRequest()
         end
     end)
     syncBtn:SetScript("OnEnter", function()
         GameTooltip:SetOwner(syncBtn, "ANCHOR_BOTTOM")
-        GameTooltip:SetText("Pedir al RL el estado actual del mapa")
+        GameTooltip:SetText("Sincronizar mapa y miembros (RL) o pedir sync")
         GameTooltip:Show()
     end)
-    syncBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
-
-
     syncBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
     xOff = xOff + 88
 
