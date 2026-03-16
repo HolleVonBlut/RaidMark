@@ -6,8 +6,8 @@
 RaidMark = {}
 local RM = RaidMark
 
-RM.VERSION      = "0.60"
-RM.VERSION_NUM  = 3
+RM.VERSION      = "0.61"
+RM.VERSION_NUM  = 4
 RM.ADDON_PREFIX = "RaidMark"
 
 RM.state = {
