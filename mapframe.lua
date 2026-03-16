@@ -231,6 +231,10 @@ local function makeIconButton(parent, iconType, texPath, size, xPos, yPos, toolt
     return btn
 end
 
+
+
+
+
 -- -- Botones de iconos de rol ------------------------------------
 local ICON_BTN = 46  -- tamanio del boton de icono en el panel
 local ICON_GAP = 4
@@ -639,7 +643,7 @@ local function buildRoleButtons()
     -- Label "Miembros del Raid"
     local lbl3 = sidePanel:CreateFontString(nil,"OVERLAY","GameFontNormal")
     lbl3:SetPoint("TOPLEFT", sidePanel, "TOPLEFT", 8, MEMBER_PANEL_Y_OFFSET + 14)
-    lbl3:SetText("Miembros del Raid")
+    lbl3:SetText("Miembros del Raid aun por ubicar")
     BigFont(lbl3, 12)
     lbl3:SetTextColor(1, 0.9, 0.4, 1)
 end
@@ -1386,6 +1390,99 @@ function MF.Hide()
     mainFrame:Hide()
     RM.state.mapVisible = false
 end
+
+
+-- -- LÓGICA DE SLOTS Y MATCHMAKING -------------------------------
+
+function MF.SelectSlot(id)
+    RM.state.selectedSlot = id
+    for i, btn in ipairs(MF.slotBtns) do
+        if i == id then btn:LockHighlight() else btn:UnlockHighlight() end
+    end
+    
+    if RaidMarkDB.slots[id] then
+        if RaidMarkDB.slots[id].isTemplate then
+            MF.autoBtn:Enable()
+            MF.statusTxt:SetText("|cff00ccffCONF DE POSICION|r")
+        else
+            MF.autoBtn:Disable()
+            MF.statusTxt:SetText("|cff00ff00CONF DE PLAYERS|r")
+        end
+    else
+        MF.autoBtn:Disable()
+        MF.statusTxt:SetText("|cff999999SLOT " .. id .. " VACÍO|r")
+    end
+end
+
+function MF.SaveToSlot()
+    local id = RM.state.selectedSlot
+    if not id then return end
+
+    RaidMarkDB.slots[id] = {
+        isTemplate = RM.state.editMode,
+        icons = {}
+    }
+
+    for iconId, data in pairs(RM.state.placedIcons) do
+        table.insert(RaidMarkDB.slots[id].icons, {
+            type = data.iconType, x = data.x, y = data.y, label = data.label
+        })
+    end
+
+    DEFAULT_CHAT_FRAME:AddMessage("RaidMark: Slot " .. id .. " guardado.")
+    if RM.state.editMode then MF.ToggleEditMode() end
+end
+
+function MF.ToggleEditMode()
+    RM.state.editMode = not RM.state.editMode
+    if RM.state.editMode then
+        MF.statusTxt:SetText("|cffff0000OFFLINE MODO EDIT|r")
+        MF.editBtn:LockHighlight()
+        RM.ClearAll()
+    else
+        MF.statusTxt:SetText("|cff00ff00MODO: ONLINE|r")
+        MF.editBtn:UnlockHighlight()
+        RM.ClearAll()
+        MF.RebuildRosterButtons()
+    end
+end
+
+function MF.RunAutoSlot()
+    local id = RM.state.selectedSlot
+    if not RaidMarkDB.slots[id] or not RaidMarkDB.slots[id].isTemplate then return end
+    
+    RM.ClearAll()
+    local saved = RaidMarkDB.slots[id].icons
+    local classPriority = {
+        ["TANK"]   = {"WARRIOR", "DRUID", "PALADIN"},
+        ["HEALER"] = {"PRIEST", "SHAMAN", "PALADIN", "DRUID"},
+        ["DPS"]    = {"ROGUE", "MAGE", "WARLOCK", "HUNTER", "WARRIOR"}
+    }
+    
+    local available = {}
+    for i = 1, GetNumRaidMembers() do
+        local name, _, _, _, class = GetRaidRosterInfo(i)
+        table.insert(available, { name = name, class = class, used = false })
+    end
+
+    local function findCandidate(iconType)
+        local role = (iconType == "TANK" or iconType == "HEALER") and iconType or "DPS"
+        for _, class in ipairs(classPriority[role]) do
+            for _, p in ipairs(available) do
+                if not p.used and p.class == class then
+                    p.used = true; return p.name
+                end
+            end
+        end
+        return nil
+    end
+
+    for _, icon in ipairs(saved) do
+        local bestName = findCandidate(icon.type)
+        if bestName then RM.Icons.PlaceNew(icon.type, icon.x, icon.y, bestName) end
+    end
+end
+
 
 function MF.Toggle()
     if mainFrame:IsVisible() then
