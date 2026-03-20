@@ -20,11 +20,12 @@
 
 ## 📦 Instalación
 
-1. Descarga el `.zip` desde [Releases](../../releases)
+1. Descarga el `.zip` desde el Github
 2. Extrae la carpeta `RaidMark` en:
    `World of Warcraft\Interface\AddOns\`
 3. Reinicia el juego o escribe `/reload`
 4. Abre con `/rm` o `/raidmark`
+*. Opcionalmente puedes usar el link de Github para instalar el addon desde el launcher de turtle wow.
 
 ---
 
