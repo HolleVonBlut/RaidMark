@@ -13,23 +13,27 @@ RM.ADDON_PREFIX = "RaidMark"
 RM.state = {
     currentMap    = nil,
     placedIcons   = {},
+    memberRoles   = {},   -- [playerName] = "TANK"|"DPS_M"|"DPS_R"|"HEAL"
     nextIconId    = 1,
     assistCanMove = false,
     mapVisible    = false,
     currentScale  = 1.0,
+currentLayer  = 1,
     pointerSlots = {
         { color = "RED",    r=1,   g=0.1, b=0.1, owner=nil, lastX=nil, lastY=nil },
         { color = "BLUE",   r=0.3, g=0.5, b=1,   owner=nil, lastX=nil, lastY=nil },
         { color = "GREEN",  r=0.2, g=0.9, b=0.2, owner=nil, lastX=nil, lastY=nil },
         { color = "YELLOW", r=1,   g=0.9, b=0.1, owner=nil, lastX=nil, lastY=nil },
     },
-    myPointerSlot   = nil,
+myPointerSlot   = nil,
     pointerActive   = false,
     pointerMouseBtn = false,
 }
 
 RM.ICON_TYPES = {
     "TANK", "HEALER", "DPS", "DPS_MELEE", "CASTER", "ARROW",
+    "ARROW_N", "ARROW_S", "ARROW_E", "ARROW_O",
+    "ARROW_NE", "ARROW_NO", "ARROW_SE", "ARROW_SO",
     "CIRCLE_S", "CIRCLE_M", "CIRCLE_L", "CIRCLE_XL",
     "SKULL1", "SKULL2", "SKULL3",
     "MARK_STAR", "MARK_CIRCLE", "MARK_DIAMOND", "MARK_TRIANGLE",
@@ -46,6 +50,14 @@ RM.ICON_TEXTURE = {
     DPS_MELEE = RM.ICON_PATH .. "icon_dps_melee",
     CASTER    = RM.ICON_PATH .. "icon_caster",
     ARROW     = RM.ICON_PATH .. "icon_arrow",
+    ARROW_N   = RM.ICON_PATH .. "arrow_N",
+    ARROW_S   = RM.ICON_PATH .. "arrow_S",
+    ARROW_E   = RM.ICON_PATH .. "arrow_E",
+    ARROW_O   = RM.ICON_PATH .. "arrow_O",
+    ARROW_NE  = RM.ICON_PATH .. "arrow_NE",
+    ARROW_NO  = RM.ICON_PATH .. "arrow_NO",
+    ARROW_SE  = RM.ICON_PATH .. "arrow_SE",
+    ARROW_SO  = RM.ICON_PATH .. "arrow_SO",
     CIRCLE_S  = RM.ICON_PATH .. "icon_circle_S",
     CIRCLE_M  = RM.ICON_PATH .. "icon_circle_M",
     CIRCLE_L  = RM.ICON_PATH .. "icon_circle_L",
@@ -77,6 +89,8 @@ RM.ICON_SIZE = {
     TANK      = 42,  HEALER = 42,  DPS    = 42,
     DPS_MELEE = 42,  CASTER = 42,  ARROW  = 36,
     CIRCLE_S  = 62,  CIRCLE_M = 104, CIRCLE_L = 169, CIRCLE_XL = 234,
+    ARROW_N = 104, ARROW_S = 104, ARROW_E = 104, ARROW_O = 104,
+    ARROW_NE = 104, ARROW_NO = 104, ARROW_SE = 104, ARROW_SO = 104,
     MEMBER_WARRIOR = 31, MEMBER_PALADIN = 31, MEMBER_HUNTER = 31,
     MEMBER_ROGUE   = 31, MEMBER_PRIEST  = 31, MEMBER_SHAMAN = 31,
     MEMBER_MAGE    = 31, MEMBER_WARLOCK = 31, MEMBER_DRUID  = 31,
@@ -138,6 +152,12 @@ end)
 function RM.OnLoad()
     if not RaidMarkDB then
         RaidMarkDB = {}
+    end
+    -- Restaurar roles guardados
+    if RaidMarkDB.memberRoles then
+        RM.state.memberRoles = RaidMarkDB.memberRoles
+    else
+        RaidMarkDB.memberRoles = RM.state.memberRoles
     end
 
     DEFAULT_CHAT_FRAME:AddMessage("RaidMark DEBUG: MapFrame=" .. tostring(RM.MapFrame) .. " Icons=" .. tostring(RM.Icons))
@@ -232,8 +252,9 @@ function RM.ValidatePointerSlots()
 end
 
 function RM.ClearAll()
-    RM.state.placedIcons = {}
-    RM.state.nextIconId  = 1
+    RM.state.placedIcons   = {}   -- limpia TODOS (incluye fakes hidden)
+    RM.state.nextIconId    = 1
+    RM.state.lastLoadedPosi = nil  -- limpiar flag de posicionamiento
     if RM.Icons and RM.Icons.ClearAllFrames then
         RM.Icons.ClearAllFrames()
     end

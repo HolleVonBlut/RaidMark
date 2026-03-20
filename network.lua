@@ -66,6 +66,8 @@ local function getChannel()
 end
 
 function N.SendRaw(msg)
+    -- Bloquear todo en modo offline
+    if RM.Network.IsOffline and RM.Network.IsOffline() then return end
     local channel = getChannel()
     if channel == "WHISPER" then return end
     SendAddonMessage(RM.ADDON_PREFIX, msg, channel)
@@ -73,17 +75,33 @@ end
 
 -- -- API publica de envio -----------------------------------------
 
-function N.SendPlace(iconId, iconType, x, y, label)
-    label = label or ""
+function N.SendPlace(iconId, iconType, x, y, label, colorR, colorG, colorB, stretchW, stretchH)
+    -- IMPORTANTE: usar "_" como placeholder de label vacio
+    -- string.gfind con ([^;]+) omite campos vacios, desplazando indices de color
+    local safeLabel = (label and label ~= "") and label or "_"
+    colorR   = colorR   or 1
+    colorG   = colorG   or 1
+    colorB   = colorB   or 1
+    stretchW = stretchW or 0
+    stretchH = stretchH or 0
     N.SendRaw("PLACE" .. MSG_SEP .. iconId .. MSG_SEP
                       .. iconType .. MSG_SEP
                       .. string.format("%.4f", x) .. MSG_SEP
                       .. string.format("%.4f", y) .. MSG_SEP
-                      .. label)
+                      .. safeLabel .. MSG_SEP
+                      .. string.format("%.3f", colorR) .. MSG_SEP
+                      .. string.format("%.3f", colorG) .. MSG_SEP
+                      .. string.format("%.3f", colorB) .. MSG_SEP
+                      .. stretchW .. MSG_SEP
+                      .. stretchH)
 end
 
 function N.SendMove(iconId, x, y)
     pendingMoves[iconId] = { x = x, y = y }
+end
+
+function N.SendStretch(iconId, stretchW, stretchH)
+    N.SendRaw("STRETCH" .. MSG_SEP .. iconId .. MSG_SEP .. stretchW .. MSG_SEP .. stretchH)
 end
 
 function N.SendRemove(iconId)
@@ -138,11 +156,25 @@ function N.SendSyncResponse()
     local val = RM.state.assistCanMove and "1" or "0"
     N.SendRaw("PERMS" .. MSG_SEP .. val)
     for iconId, data in pairs(RM.state.placedIcons) do
-        N.SendRaw("PLACE" .. MSG_SEP .. iconId .. MSG_SEP
-                          .. data.iconType .. MSG_SEP
-                          .. string.format("%.4f", data.x) .. MSG_SEP
-                          .. string.format("%.4f", data.y) .. MSG_SEP
-                          .. (data.label or ""))
+        -- Nunca broadcastear fakes (iconos de posicionamiento offline)
+        if RM.IsOfflineRoleIcon and RM.IsOfflineRoleIcon(data.iconType) then
+            -- skip
+        elseif not data.hidden then
+            local cr = data.colorR   or 1
+            local cg = data.colorG   or 1
+            local cb = data.colorB   or 1
+            local sw = data.stretchW or 0
+            local sh = data.stretchH or 0
+            N.SendRaw("PLACE" .. MSG_SEP .. iconId .. MSG_SEP
+                              .. data.iconType .. MSG_SEP
+                              .. string.format("%.4f", data.x) .. MSG_SEP
+                              .. string.format("%.4f", data.y) .. MSG_SEP
+                              .. ((data.label and data.label ~= "") and data.label or "_") .. MSG_SEP
+                              .. string.format("%.3f", cr) .. MSG_SEP
+                              .. string.format("%.3f", cg) .. MSG_SEP
+                              .. string.format("%.3f", cb) .. MSG_SEP
+                              .. sw .. MSG_SEP .. sh)
+        end
     end
     DEFAULT_CHAT_FRAME:AddMessage("RaidMark: Estado sincronizado enviado.")
 end
@@ -237,9 +269,15 @@ function N.OnReceive(msg, channel, sender)
         local iconType = parts[3]
         local x        = tonumber(parts[4])
         local y        = tonumber(parts[5])
-        local label    = parts[6] or ""
+        local rawLabel = parts[6] or "_"
+        local label    = (rawLabel == "_") and "" or rawLabel
+        local colorR   = tonumber(parts[7]) or 1
+        local colorG   = tonumber(parts[8]) or 1
+        local colorB   = tonumber(parts[9]) or 1
+        local stretchW = tonumber(parts[10]) or 0
+        local stretchH = tonumber(parts[11]) or 0
         if iconId and iconType and x and y then
-            RM.Icons.ApplyPlace(iconId, iconType, x, y, label)
+            RM.Icons.ApplyPlace(iconId, iconType, x, y, label, colorR, colorG, colorB, stretchW, stretchH)
         end
 
     elseif cmd == "MOVE" then
@@ -248,6 +286,14 @@ function N.OnReceive(msg, channel, sender)
         local y      = tonumber(parts[4])
         if iconId and x and y then
             RM.Icons.ApplyMove(iconId, x, y)
+        end
+
+    elseif cmd == "STRETCH" then
+        local iconId   = tonumber(parts[2])
+        local stretchW = tonumber(parts[3])
+        local stretchH = tonumber(parts[4])
+        if iconId and stretchW and stretchH then
+            RM.Icons.ApplyStretch(iconId, stretchW, stretchH)
         end
 
     elseif cmd == "REMOVE" then
@@ -265,13 +311,13 @@ function N.OnReceive(msg, channel, sender)
         local mapKey = parts[2]
         if mapKey then
             RM.state.currentMap = mapKey
-            RM.MapFrame.LoadMap(mapKey)
+            if RM.MapFrame and RM.MapFrame.LoadMap then RM.MapFrame.LoadMap(mapKey) end
         end
 
     elseif cmd == "PERMS" then
         if not RM.Permissions.SenderIsRL(sender) then return end
         RM.state.assistCanMove = (parts[2] == "1")
-        RM.MapFrame.UpdateAssistBtn()
+        if RM.MapFrame and RM.MapFrame.UpdateAssistBtn then RM.MapFrame.UpdateAssistBtn() end
 
     elseif cmd == "VER" then
         local theirVer = tonumber(parts[2]) or 0
