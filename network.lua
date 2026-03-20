@@ -150,6 +150,9 @@ function N.SendSyncRequest()
 end
 
 function N.SendSyncResponse()
+    -- Mandar CLEAR primero para que los receptores limpien su estado anterior
+    -- Esto evita que iconos viejos queden "fantasmas" en clientes que cambiaron de RL
+    N.SendRaw("CLEAR")
     if RM.state.currentMap then
         N.SendRaw("MAP" .. MSG_SEP .. RM.state.currentMap)
     end
@@ -265,6 +268,7 @@ function N.OnReceive(msg, channel, sender)
     if not RM.Permissions.SenderCanControl(sender) then return end
 
     if cmd == "PLACE" then
+        if RM.state.offlineMode then return end  -- ignorar en modo offline
         local iconId   = tonumber(parts[2])
         local iconType = parts[3]
         local x        = tonumber(parts[4])
@@ -281,6 +285,7 @@ function N.OnReceive(msg, channel, sender)
         end
 
     elseif cmd == "MOVE" then
+        if RM.state.offlineMode then return end
         local iconId = tonumber(parts[2])
         local x      = tonumber(parts[3])
         local y      = tonumber(parts[4])
@@ -289,6 +294,7 @@ function N.OnReceive(msg, channel, sender)
         end
 
     elseif cmd == "STRETCH" then
+        if RM.state.offlineMode then return end
         local iconId   = tonumber(parts[2])
         local stretchW = tonumber(parts[3])
         local stretchH = tonumber(parts[4])
@@ -297,6 +303,7 @@ function N.OnReceive(msg, channel, sender)
         end
 
     elseif cmd == "REMOVE" then
+        if RM.state.offlineMode then return end
         local iconId = tonumber(parts[2])
         if iconId then
             RM.Icons.ApplyRemove(iconId)
@@ -304,10 +311,12 @@ function N.OnReceive(msg, channel, sender)
 
     elseif cmd == "CLEAR" then
         if not RM.Permissions.SenderIsRL(sender) then return end
+        if RM.state.offlineMode then return end  -- ignorar en modo offline
         RM.ClearAll()
 
     elseif cmd == "MAP" then
         if not RM.Permissions.SenderIsRL(sender) then return end
+        if RM.state.offlineMode then return end  -- ignorar en modo offline
         local mapKey = parts[2]
         if mapKey then
             RM.state.currentMap = mapKey

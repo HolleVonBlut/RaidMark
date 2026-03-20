@@ -10,6 +10,10 @@ local P = RM.Permissions
 -- -- Roles -------------------------------------------------------
 
 function P.IsRL()
+    -- Si no esta en ningun grupo, se trata como RL (puede usar modo offline, escenas, etc.)
+    if GetNumRaidMembers() == 0 and GetNumPartyMembers() == 0 then
+        return true
+    end
     return IsRaidLeader() == 1 or IsRaidLeader() == true
 end
 
@@ -24,6 +28,8 @@ end
 -- -- ?Puede colocar/mover iconos? --------------------------------
 
 function P.CanPlace()
+    -- En modo offline cualquiera puede colocar/mover/borrar
+    if RM.state and RM.state.offlineMode then return true end
     if P.IsRL() then return true end
     if P.IsAssist() and RM.state.assistCanMove then return true end
     return false
