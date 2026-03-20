@@ -1,7 +1,7 @@
 # RaidMark - Turtle WoW 1.12
 
 **Autor:** Holle
-**Versión:** 0.61
+**Versión:** 1.0
 **Servidor:** Turtle WoW (WoW vanilla 1.12 - South Seas server)
 
 ---
