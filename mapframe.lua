@@ -2394,6 +2394,12 @@ end
 function MF.Hide()
     mainFrame:Hide()
     RM.state.mapVisible = false
+    -- Cerrar paneles flotantes que son hijos de UIParent
+    if RaidMarkGridPanel then RaidMarkGridPanel:Hide() end
+    if RaidMarkArrowDD then RaidMarkArrowDD:Hide() end
+    if RaidMarkGrandSlotDD then RaidMarkGrandSlotDD:Hide() end
+    if RaidMarkFilterDD then RaidMarkFilterDD:Hide() end
+    if RaidMarkHelp then RaidMarkHelp:Hide() end
 end
 
 
