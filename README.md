@@ -1,7 +1,7 @@
 # RaidMark — Mesa de Tácticas para Raids
 
 > Addon de World of Warcraft **1.12 / Vanilla** para servidores privados (Turtle WoW).  
-> Diseñado para Raid Leaders que necesitan comunicar estrategias visualmente en tiempo real.
+> Diseñado para Raid Leaders y Asistentes que necesitan comunicar estrategias visualmente en tiempo real.
 
 ---
 
@@ -9,18 +9,19 @@
 
 - 🗺️ **Mapa táctico interactivo** con 30+ encuentros de AQ40 y Naxxramas
 - 🔴 **Iconos de rol** arrastrables: Tank, Healer, DPS, Círculos, Marcas de raid, Calaveras
-- 🏹 **Flechas direccionales** (N/S/E/O/NE/NO/SE/SO) con stretch ajustable
+- 🏹 **Flechas direccionales** (N/S/E/O/NE/NO/SE/SO) con stretch ajustable por rueda del mouse
 - 👥 **Panel de raiders** con asignación de roles, filtros y herramientas de posicionamiento
-- 💾 **Sistema de escenas** — 40 slots locales (10 GrandSlots × 4)
+- 💾 **Sistema de escenas** — 40 slots locales (10 GrandSlots × 4) para todos los jugadores
 - 🎯 **Modo de posicionamiento** — diseña en offline, sincroniza raiders reales con un click
-- 📡 **Sincronización en red** — todo el raid ve los cambios en tiempo real
-- 🔇 **Modo Offline** — diseña estrategias sin conexión al raid
+- 📡 **Sincronización en red inteligente** — throttle automático según cantidad de íconos
+- 🔇 **Modo Offline** — diseña estrategias sin afectar al raid
+- 📊 **Monitor de memoria** — alerta progresiva con opción de deshabilitar
 
 ---
 
 ## 📦 Instalación
 
-1. Descarga el `.zip` desde github
+1. Descarga el `.zip` desde [Releases](../../releases)
 2. Extrae la carpeta `RaidMark` en:
    `World of Warcraft\Interface\AddOns\`
 3. Reinicia el juego o escribe `/reload`
@@ -38,124 +39,158 @@
 ### Seleccionar un encuentro
 Haz click en el botón **▼ Encounter** (esquina superior izquierda del mapa).
 
-### Colocar iconos
+### Colocar íconos
 1. Selecciona un ícono del panel derecho
 2. Haz click izquierdo en el mapa para colocarlo
 3. **Arrastra** para moverlo · **Click derecho** para eliminar
 
+### Escala y posición
+- Botón **Scale** (esquina superior derecha) — cicla entre 100% / 90% / 80%
+- Arrastra la barra de título para mover el addon
+- **La posición y escala se guardan entre sesiones** — no hace falta reconfigurar al entrar
+
 ### Flechas direccionales
-- Click en el botón de flecha → se abre un **dropdown** con 8 direcciones (N/S/E/O/NE/NO/SE/SO)
-- Cada flecha tiene 3 variantes de color: **Rojo**, **Blanco**, **Amarillo**
-- En el lienzo, la flecha tiene un **cuadrado verde central (hitbox)**:
-  - **Drag** sobre el hitbox = mover la flecha
-  - **Rueda del mouse** sobre el hitbox = estirar/encoger *(solo RL y Assists)*
-  - Flechas N/S estiran verticalmente · E/O estiran horizontalmente
-  - Flechas diagonales escalan de forma uniforme
-- **Click derecho** sobre el hitbox = eliminar
+- Click en el botón de flecha → dropdown con 8 direcciones × 3 colores (Rojo / Blanco / Amarillo)
+- El **cuadrado verde (hitbox)** en el centro de cada flecha:
+  - **Drag** = mover · **Click derecho** = eliminar
+  - **Rueda del mouse** = estirar/encoger *(solo RL y Assists)*
+  - Flechas N/S → estiran verticalmente · E/O → horizontalmente · Diagonales → escala uniforme
 
 ---
 
 ## 👥 Roles y permisos
 
-| Rol | Permisos |
-|-----|----------|
-| **Raid Leader (RL)** | Todo: colocar, mover, borrar, sync, offline, escenas, auto-asignar |
-| **Assist** | Colocar y mover iconos |
-| **Raider** | Solo ver |
+| Rol | Íconos | Escenas | Auto-assign | Modo Offline |
+|-----|--------|---------|-------------|--------------|
+| **Raid Leader** | ✅ Total | ✅ Guardar + Cargar | ✅ Total | ✅ Total |
+| **Assist** | ✅ Colocar/Mover | ✅ Guardar + Cargar en Offline | ✅ Puede lanzar | ✅ Total |
+| **Raider** | ❌ Solo ver | ✅ Solo guardar local | ❌ | ✅ Total |
 
-- Activa permisos de Assist con el botón **Assist: ON/OFF**
-- Al entrar en **Modo Offline**, el Assist se desactiva automáticamente y se restaura al salir
+- Activa permisos de Assist con el botón **Assist: ON/OFF** en la toolbar
+- Al entrar en Modo Offline el Assist se desactiva automáticamente y se restaura al salir
 
 ---
 
 ## 💾 Sistema de Escenas
 
-Guarda hasta **40 disposiciones** del lienzo:
-- **4 slots rápidos** (`1 2 3 4`) · **10 GrandSlots** (dropdown `GS1 ▼`)
-- Las escenas se guardan localmente y **persisten entre sesiones**
+Guarda hasta **40 disposiciones** del lienzo organizadas en:
+- **4 slots rápidos** (`1 2 3 4`) — **10 GrandSlots** (dropdown `GS▼`)
+- Las escenas se guardan **localmente por jugador** y persisten entre sesiones
 
-### Colores de los slots
+### Colores de slots
 
 | Color | Significado |
 |-------|-------------|
 | ⬜ Gris | Vacío |
-| 🔴 Rojo | Seleccionado (listo para guardar o usar con Sync P) |
-| 🟠 Naranja | Seleccionado con contenido (segundo click = cargar) |
+| 🔴 Rojo + **v** | Seleccionado (listo para guardar, cargar o borrar) |
+| 🟠 Naranja + **v** | Seleccionado con contenido (segundo click = cargar) |
 | 🟡 Amarillo | Tiene contenido guardado |
-| 🟢 Verde | **Mapa de posicionamiento** (contiene posiciones de raid) |
+| 🟢 Verde | **Mapa de posicionamiento** |
 
-### Guardar una escena
-1. Selecciona un slot → se pone **rojo**
-2. Presiona **[S]** (disquete)
-3. Si el lienzo está vacío, el slot se **limpia** (equivale a borrar el slot)
+> La **v** aparece flotando encima del slot activo — el color del slot nunca cambia por la selección, siempre refleja el contenido real.
+
+### Botones de la toolbar de escenas
+
+| Botón | Función |
+|-------|---------|
+| **[S]** | Guardar lienzo en slot seleccionado. Si el lienzo está vacío, **borra el slot** |
+| **[B]** | Borrar slot seleccionado — primer click pide confirmación en el box, segundo click borra |
+| **1 2 3 4** | Seleccionar slot rápido del GrandSlot activo |
+| **GS▼** | Dropdown de 10 GrandSlots con contador de slots ocupados |
 
 ### Cargar una escena
-- Click en slot → primer click = seleccionar (rojo/naranja)
-- Segundo click = **cargar** al lienzo y broadcastear al raid
-
-> Los slots verdes (posicionamiento) cargan los cuadritos de posición **solo localmente** — el raid no los ve hasta que el RL usa **Sync P**
+- Primer click → seleccionar (v roja/naranja)
+- Segundo click → cargar al lienzo y broadcastear al raid *(solo RL, o cualquiera en Modo Offline)*
 
 ---
 
 ## 🎯 Modo de Posicionamiento
 
-Diseña dónde va cada rol antes del pull, sin necesidad de estar en raid.
+Diseña dónde va cada rol antes del pull. Disponible para **todos** en Modo Offline.
 
 ### Crear un mapa de posicionamiento
 
-1. Presiona **M Offline** → aparece advertencia → presiona de nuevo para confirmar
-2. El panel de raiders muestra iconos de rol con sus colores:
+1. Presiona **M Offline** → confirma en el segundo click
+2. Coloca hasta **40 cuadritos de posición** (solo en Modo Offline):
 
-| Ícono | Color | Rol |
-|-------|-------|-----|
+| Cuadrito | Color | Rol |
+|----------|-------|-----|
 | Tank | 🔵 Azul | Tank |
 | Healer | 🟢 Verde | Healer |
 | DPS Melee | 🔴 Rojo | DPS Melee |
 | DPS Rang | 🟠 Naranja | DPS a Rango |
-| Edit | ⬜ Gris | Uso futuro |
 
-3. Coloca hasta **40 posiciones** en el mapa *(solo en Modo Offline)*
-4. Guarda en un slot → el slot se pinta **verde**
-5. Presiona **M Offline** para salir
+3. Guarda en un slot → se pinta **verde**
+4. Sal del Modo Offline
 
-> Para ajustar posiciones: entra al Modo Offline, edita, guarda, sal.
+> Los cuadritos de posición **solo se pueden colocar y mover en Modo Offline** — en modo normal son visibles como referencia pero no editables.
 
-### Usar el mapa en raid (Sync P)
+### Usar el mapa en raid
 
-1. **Selecciona el slot verde** con un click → se pone rojo
-2. Presiona **Sync P** → el addon coloca automáticamente cada raider en su posición
+1. **Selecciona el slot verde** (un click → se pone rojo)
+2. Presiona **Sync P** → cada raider con rol asignado se coloca en su posición
 
-**Reglas del Sync P:**
-- Cada cuadrito = exactamente un raider
-- Los raiders ya colocados manualmente tienen **prioridad** — Sync P no los mueve
-- Sync P busca el primer slot libre de su rol para cada raider que falta
-- Si hay más raiders del mismo rol que cuadritos, los sobrantes no se colocan
-- **Se puede presionar Sync P múltiples veces** sin riesgo de duplicados
-- Los cuadritos de posición son **solo visibles para el RL** — los raiders nunca los ven
-- Los cuadritos solo desaparecen al presionar **Limpiar**
+**Reglas de Sync P:**
+- Raiders ya colocados manualmente tienen **prioridad** — Sync P no los mueve
+- Busca el **primer slot libre** de su rol — nunca duplica raiders
+- Se puede presionar **múltiples veces** sin riesgo (conectados tarde, rotación de posiciones)
+- Los cuadritos son **solo visibles para el RL** — el raid nunca los ve
+- Los cuadritos desaparecen solo al presionar **Limpiar**
 
-> **Reset P** — devuelve todos los raiders del lienzo al panel en un click
+### Botones del panel de raiders
+
+| Botón | Disponible para | Función |
+|-------|----------------|---------|
+| **[v]** | Todos | Dropdown para elegir rol de filtro |
+| **[Filtrar]** | Todos | Ordena raiders por rol seleccionado primero |
+| **[Reset P]** | RL | Devuelve todos los raiders del lienzo al panel |
+| **[Env.Rol]** | Assists activos | Envía propuesta de roles al RL (rellena huecos sin sobreescribir) |
+| **[Sync Rol]** | RL | Sincroniza todos los roles asignados al raid |
+
+---
+
+## 📡 Sincronización en red
+
+### Sync inteligente con throttle automático
+
+Al presionar **Sync**, el addon detecta cuántos íconos hay y elige el delay apropiado:
+
+| Íconos | Delay | Tiempo total |
+|--------|-------|-------------|
+| 1–10 | Sin delay | Instantáneo |
+| 11–25 | 0.05s entre msgs | ~1–2 seg |
+| 26–50 | 0.15s entre msgs | ~5–7 seg |
+| 50+ | 0.2s entre msgs | ~10 seg |
+
+- El botón **Sync** se pone gris e inactivo durante el envío
+- Los movimientos se pausan y se reanudan al terminar
+- El box muestra `Sync [====    ] 45%` con porcentaje en tiempo real
+- Los **moves individuales** en tiempo real son siempre instantáneos — el throttle solo aplica al Sync masivo
+
+### Sync Rol
+- **[Sync Rol]** (solo RL) envía todos los roles asignados al raid con micro-delay de 0.1s entre mensajes
+- Los receptores actualizan su panel de raiders automáticamente
 
 ---
 
 ## 🤖 Auto-asignación de roles
 
-El RL puede asignar roles automáticamente via chat de `/raid`.
+> **Solo puede correr un auto-asignador a la vez.** Al iniciar uno, todos los clientes del raid bloquean sus botones durante la duración del proceso más 10 segundos de cooldown post-assign.
 
-> **Solo puede correr un auto-asignador a la vez.** Si hay uno activo, los demás están bloqueados hasta que termine.
-
-> **Los roles asignados se guardan entre sesiones.** Sobreviven a `/reload` y reinicios. Las respuestas nuevas *sobreescriben* el rol anterior raider por raider, sin afectar a los demás.
+> **Los roles asignados se guardan entre sesiones.** Sobreviven a `/reload` y reinicios. Cada respuesta sobreescribe el rol anterior raider por raider.
 
 ### Botones individuales *(10 segundos)*
 
 Presiona **Healer**, **DD M**, **DD R** o **Tank**.
-Sale en `/rw`: *"Todos los Healers escriban [1] en /raid"*
-Los últimos **3 segundos** se spamea la cuenta regresiva.
+- Sale en `/rw`: *"Todos los Healers escriban [1] en /raid"*
+- Los últimos **3 segundos** se spamea la cuenta regresiva
+- Solo escucha el canal `/raid`
+- Disponible para **RL y Assists activos**
 
 ### Auto-Total *(20 segundos)*
 
-Pide todos los roles a la vez:
 *"Escribe tu número: 1=Healer // 2=DPS Melee // 3=DPS Rango // 4=Tank"*
+
 Al terminar reporta cuántos del total respondieron.
 
 | Número | Rol |
@@ -165,43 +200,42 @@ Al terminar reporta cuántos del total respondieron.
 | `3` | DPS a Rango |
 | `4` | Tank |
 
-> Solo escucha el canal `/raid`. Requiere estar en un raid activo.
-
 ### Dots de rol (panel de raiders)
 
-Cada raider en el panel tiene **4 puntitos** a su derecha (H · D · D · T).
-- Click en un puntito = asignar ese rol manualmente
-- Click de nuevo en el mismo = quitar el rol
-- Solo un rol por raider
-- Los puntitos se actualizan en tiempo real
+Cada raider tiene **4 puntitos** (H · D · D · T) — click activa/desactiva el rol. Disponible para **RL y Assists activos**.
 
-### Filtrar raiders
+### Envío de roles entre Assist y RL
 
-Encima del panel de raiders hay tres botones compactos:
-- **[v]** — abre dropdown para seleccionar rol (Healer / DPS Melee / DPS Rang / Tank)
-- **[Filtrar]** — los raiders del rol seleccionado aparecen primero en la lista
-- **[Reset P]** — devuelve todos los raiders del lienzo al panel
+- El Assist asigna roles localmente via dots o auto-assign
+- Presiona **[Env.Rol]** para proponer sus roles al RL
+- El RL recibe y aplica **solo los raiders sin rol asignado** — nunca sobreescribe los suyos
+- Throttle de 15 segundos entre envíos para no saturar el canal
+
+### Filtrar raiders por rol
+
+1. Click en **[v]** → selecciona rol
+2. Click en **[Filtrar]** → los raiders del rol aparecen primero en la lista
 
 ---
 
 ## 🔇 Modo Offline
 
-Permite diseñar estrategias sin afectar al raid ni requerir estar en grupo.
+Disponible para **todos** (RL, Assist, Raiders).
 
 **Al entrar:**
 - Advertencia en el box → segundo click confirma
-- Se limpia el lienzo
+- Se limpia el lienzo local
 - Si hay Assist activo, se desactiva automáticamente
-- Toda red queda bloqueada
+- Toda red queda bloqueada — ningún mensaje entra ni sale
 - El box muestra `[ MODO OFFLINE ]` en rojo periódicamente
 
 **Al salir:**
-- Se limpia el lienzo
+- Se limpia el lienzo local
 - El Assist se restaura si estaba activo antes
 
-**Bloqueado en Modo Offline:** Sync · Auto-assign · Auto-Total · Sync P
+**Bloqueado en Modo Offline:** Sync · Sync P · Auto-assign · Auto-Total
 
-**Disponible en Modo Offline:** Sistema de escenas · Grid · Iconos · Flechas · Panel de posicionamiento
+**Disponible en Modo Offline:** Sistema de escenas (guardar + cargar) · Grid · Íconos · Flechas · Panel de posicionamiento
 
 ---
 
@@ -213,30 +247,55 @@ Permite diseñar estrategias sin afectar al raid ni requerir estar en grupo.
 
 ---
 
+## 🖥️ Monitor de memoria
+
+WoW vanilla asigna un pool de memoria fijo para addons — independiente de la RAM del jugador. RaidMark monitorea los frames creados en la sesión y avisa cuando se acerca al límite.
+
+| Umbral | Tipo | Comportamiento |
+|--------|------|----------------|
+| **700 frames** | ⚠️ Amigable | Mensaje en box cada 20 seg + cuadrado **azul** encima del box |
+| **1100 frames** | 🔴 Crítico | Parpadeo rojo/amarillo en el box + cuadrado **rojo** encima del box |
+
+- Al aparecer la alarma, un cuadrado aparece **encima del box informativo** con el texto *"deshabilitar alarma"* a su izquierda
+- Click en el cuadrado → la alarma se deshabilita y el cuadrado desaparece
+- La alarma crítica usa texto en **MAYÚSCULAS** y parpadeo — una vez deshabilitada es responsabilidad del usuario
+- La solución definitiva es siempre `/reload`
+
+---
+
 ## ⚙️ Comandos slash
 
 | Comando | Función |
 |---------|---------|
 | `/rm` | Abrir / cerrar el mapa |
-| `/rm clear` | Limpiar todos los iconos |
+| `/rm clear` | Limpiar todos los íconos |
 | `/rm map <key>` | Cambiar mapa (ej: `twin_emperors`) |
 | `/rm assist on/off` | Habilitar/deshabilitar permisos de Assist |
 
 ---
 
+## 🔧 Requisitos
+
+- World of Warcraft **1.12.1** (Vanilla)
+- Servidor: **Turtle WoW** u otro servidor 1.12 compatible
+- Se requiere ser **Raid Leader** para las funciones tácticas principales
+
+---
+
 ## 📝 Notas técnicas
 
-- Protocolo de red propio via `SendAddonMessage` con separador `;`
-- `SavedVariables`: `RaidMarkDB` (configuración + roles) · `RaidMarkSceneDB` (escenas)
-- Los roles de raid persisten en disco — sobreviven a `/reload` y reinicios
-- Los cuadritos de posicionamiento **nunca se broadcastean** — son exclusivamente locales para el RL
+- Protocolo de red propio via `SendAddonMessage` con separador `;` — nunca usa `|` (reservado por WoW para color codes)
+- `SavedVariables`: `RaidMarkDB` (config + roles + posición + escala) · `RaidMarkSceneDB` (escenas por jugador)
+- Los roles persisten en disco — sobreviven a `/reload` y reinicios
+- Los cuadritos de posicionamiento **nunca se broadcastean** — exclusivamente locales para el RL
+- El throttle de Sync es automático y transparente para el usuario
+- Escala (80%/90%/100%) y posición del addon se guardan y restauran entre sesiones
+- Límite de **40 posiciones** de rol por mapa de posicionamiento
 - Compatible con grupos de party (no solo raids)
-- Las flechas usan TGAs personalizados de 256×256
-- Límite de **40 posiciones** de rol en Modo Offline por sesión
 
 ---
 
 ## 👤 Autor
 
-**Holle** — Turtle WoW
+**Holle** — Turtle WoW  
 *"By Holle - South Seas Server"*
