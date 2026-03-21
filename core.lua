@@ -6,6 +6,15 @@
 RaidMark = {}
 local RM = RaidMark
 
+-- Mensaje: intenta el box informativo, sino va al chat
+function RM.Msg(text, r, g, b)
+    if RM.MapFrame and RM.MapFrame.ConsoleMsg then
+        RM.MapFrame.ConsoleMsg(text, r or 0.7, g or 0.9, b or 1)
+    else
+        DEFAULT_CHAT_FRAME:AddMessage("RaidMark: " .. text)
+    end
+end
+
 RM.VERSION      = "0.61"
 RM.VERSION_NUM  = 4
 RM.ADDON_PREFIX = "RaidMark"
@@ -262,7 +271,7 @@ end
 
 function RM.SetMap(mapKey)
     if not RaidMark_Maps or not RaidMark_Maps[mapKey] then
-        DEFAULT_CHAT_FRAME:AddMessage("RaidMark: Mapa desconocido: " .. tostring(mapKey))
+        RM.Msg("Mapa desconocido: " .. tostring(mapKey), 1, 0.5, 0.2)
         return
     end
     RM.state.currentMap = mapKey
@@ -278,7 +287,7 @@ local function safeMapFrame(fn)
     if RM.MapFrame and RM.MapFrame[fn] then
         RM.MapFrame[fn]()
     else
-        DEFAULT_CHAT_FRAME:AddMessage("RaidMark: UI no inicializada todavia.")
+        RM.Msg("UI no inicializada todavia.", 1, 0.6, 0.2)
     end
 end
 
@@ -296,7 +305,7 @@ SlashCmdList["RAIDMARK"] = function(msg)
             RM.ClearAll()
             RM.Network.SendClear()
         else
-            DEFAULT_CHAT_FRAME:AddMessage("RaidMark: No tenes permisos para limpiar.")
+            RM.Msg("Sin permisos para limpiar.", 1, 0.3, 0.3)
         end
 
     elseif string.sub(cmd, 1, 4) == "map " then
@@ -305,21 +314,21 @@ SlashCmdList["RAIDMARK"] = function(msg)
             RM.SetMap(mapKey)
             RM.Network.SendMapChange(mapKey)
         else
-            DEFAULT_CHAT_FRAME:AddMessage("RaidMark: Solo el RL puede cambiar el mapa.")
+            RM.Msg("Solo el RL puede cambiar el mapa.", 1, 0.4, 0.2)
         end
 
     elseif cmd == "assist on" then
         if RM.Permissions.IsRL() then
             RM.state.assistCanMove = true
             RM.Network.SendPermissions(true)
-            DEFAULT_CHAT_FRAME:AddMessage("RaidMark: Asistentes pueden mover iconos.")
+            RM.Msg("Assist: ON — pueden mover iconos.", 0.3, 1, 0.4)
         end
 
     elseif cmd == "assist off" then
         if RM.Permissions.IsRL() then
             RM.state.assistCanMove = false
             RM.Network.SendPermissions(false)
-            DEFAULT_CHAT_FRAME:AddMessage("RaidMark: Solo el RL puede mover iconos.")
+            RM.Msg("Assist: OFF — solo el RL mueve.", 0.7, 0.7, 0.7)
         end
 
     else

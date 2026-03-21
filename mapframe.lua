@@ -35,12 +35,22 @@ local mainFrame = CreateFrame("Frame", "RaidMarkMainFrame", UIParent)
 mainFrame:SetWidth(TOTAL_W)
 mainFrame:SetHeight(TOTAL_H)
 mainFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+-- Restaurar posicion y escala guardadas (se sobreescribe en MF.Build si hay datos)
 mainFrame:SetFrameStrata("HIGH")
 mainFrame:SetMovable(true)
 mainFrame:EnableMouse(true)
 mainFrame:RegisterForDrag("LeftButton")
 mainFrame:SetScript("OnDragStart", function() mainFrame:StartMoving() end)
-mainFrame:SetScript("OnDragStop",  function() mainFrame:StopMovingOrSizing() end)
+mainFrame:SetScript("OnDragStop", function()
+    mainFrame:StopMovingOrSizing()
+    -- Persistir posicion
+    if RaidMarkDB then
+        local point, _, relPoint, x, y = mainFrame:GetPoint()
+        RaidMarkDB.savedX     = x
+        RaidMarkDB.savedY     = y
+        RaidMarkDB.savedPoint = point
+    end
+end)
 mainFrame:Hide()
 
 -- Fondo principal
@@ -591,6 +601,8 @@ end
 
 -- Mini consola dinamica con fade in/out entre mensajes idle
 local consolePriorityTimer = 0
+local assignCooldown       = 0   -- cooldown post auto-assign
+local ASSIGN_COOLDOWN_TIME = 10
 local consoleIdleIndex     = 1
 local CONSOLE_PRIORITY_TTL = 5
 local CONSOLE_SHOW_TIME    = 3.5   -- segundos visible cada mensaje
@@ -667,6 +679,12 @@ if lastTime > 0 and (now - lastTime) > POINTER_INACTIVITY_TTL then
         if changed then MF.UpdatePointerSlotUI() end
     end
 
+    -- Decrementar cooldown de auto-assign
+    if assignCooldown > 0 then
+        assignCooldown = assignCooldown - dt
+        if assignCooldown < 0 then assignCooldown = 0 end
+    end
+
     -- Fade de consola
     if consolePriorityTimer > 0 then
         consolePriorityTimer = consolePriorityTimer - dt
@@ -705,6 +723,139 @@ if lastTime > 0 and (now - lastTime) > POINTER_INACTIVITY_TTL then
             consoleShowTimer = CONSOLE_SHOW_TIME
         end
         consoleApplyAlpha()
+    end
+end)
+
+-- ── Sistema de aviso de memoria ──────────────────────────────────
+local MEM_WARN_THRESHOLD  = 700    -- aviso amigable
+local MEM_CRIT_THRESHOLD  = 1100   -- aviso critico con parpadeo
+local memWarnTimer        = 0
+local memWarnInterval     = 20     -- segundos entre avisos normales
+local memBlinkTimer       = 0
+local memBlinkState       = false
+local memCritActive       = false
+local memWarnDisabled     = false  -- usuario deshabilitó alarma amigable
+local memCritDisabled     = false  -- usuario deshabilitó alarma critica
+
+-- Boton de alarma encima del box (se crea lazy la primera vez)
+local memAlarmBtn         = nil
+local memAlarmBtnCreated  = false
+
+local function createMemAlarmBtn()
+    if memAlarmBtnCreated then return end
+    if not MF.consoleFrame then return end
+    memAlarmBtnCreated = true
+
+    memAlarmBtn = CreateFrame("Button", "RaidMarkMemAlarmBtn", MF.consoleFrame)
+    memAlarmBtn:SetWidth(12); memAlarmBtn:SetHeight(12)
+    memAlarmBtn:SetPoint("BOTTOM", MF.consoleFrame, "TOP", 0, 2)
+    memAlarmBtn:SetBackdrop({
+        bgFile   = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        edgeSize = 5, insets={left=1,right=1,top=1,bottom=1}
+    })
+    memAlarmBtn:SetBackdropColor(0.1, 0.3, 0.9, 1)
+    memAlarmBtn:SetBackdropBorderColor(0.3, 0.6, 1, 1)
+    memAlarmBtn:EnableMouse(true)
+    local alarmLbl = memAlarmBtn:CreateFontString(nil,"OVERLAY")
+    alarmLbl:SetFont("Fonts\\FRIZQT__.TTF", 6, "OUTLINE")
+    alarmLbl:SetPoint("RIGHT", memAlarmBtn, "LEFT", -4, 0)
+    alarmLbl:SetText("deshabilitar alarma")
+    alarmLbl:SetTextColor(1,1,1,1)
+    memAlarmBtn.lbl = alarmLbl
+    memAlarmBtn:SetScript("OnClick", function()
+        if memCritActive then
+            memCritDisabled = true
+            memCritActive   = false
+            consolePriorityTimer = 0
+            if MF.consoleText then BigFont(MF.consoleText, 9) end
+        else
+            memWarnDisabled = true
+        end
+        memAlarmBtn:Hide()
+    end)
+    memAlarmBtn:SetScript("OnEnter", function()
+        GameTooltip:SetOwner(memAlarmBtn,"ANCHOR_TOP")
+        GameTooltip:SetText("Deshabilitar alarma de memoria")
+        GameTooltip:AddLine("El riesgo persiste — usa /reload cuando puedas", 0.8,0.6,0.3,true)
+        GameTooltip:Show()
+    end)
+    memAlarmBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    memAlarmBtn:Hide()
+end
+
+local function showMemAlarmBtn(isCrit)
+    createMemAlarmBtn()
+    if not memAlarmBtn then return end
+    if isCrit then
+        memAlarmBtn:SetBackdropColor(0.7, 0.05, 0.05, 1)
+        memAlarmBtn:SetBackdropBorderColor(1, 0.2, 0.2, 1)
+        memAlarmBtn.lbl:SetText("DESHABILITAR ALARMA")
+        memAlarmBtn.lbl:SetTextColor(1, 0.9, 0.1, 1)
+    else
+        memAlarmBtn:SetBackdropColor(0.1, 0.3, 0.9, 1)
+        memAlarmBtn:SetBackdropBorderColor(0.3, 0.6, 1, 1)
+        memAlarmBtn.lbl:SetText("deshabilitar alarma")
+        memAlarmBtn.lbl:SetTextColor(1, 1, 1, 1)
+    end
+    memAlarmBtn:Show()
+end
+
+local memWarnFrame = CreateFrame("Frame", "RaidMarkMemWarn")
+memWarnFrame:SetScript("OnUpdate", function()
+    local dt = arg1
+    local count = RM.Icons and RM.Icons.frameCount or 0
+
+    -- Modo critico
+    if count >= MEM_CRIT_THRESHOLD and not memCritDisabled then
+        if not memCritActive then
+            memCritActive = true
+            memBlinkTimer = 0
+            memBlinkState = true
+            showMemAlarmBtn(true)
+        end
+        memBlinkTimer = memBlinkTimer + dt
+        if memBlinkTimer >= 1.0 then
+            memBlinkTimer = 0
+            memBlinkState = not memBlinkState
+            if MF.consoleText then
+                MF.consoleText:SetFont("Fonts\\FRIZQT__.TTF", 11, "OUTLINE")
+                MF.consoleText:SetText('MEMORIA COMPROMETIDA USA "/reload" !!!')
+                MF.consoleText:SetTextColor(memBlinkState and 1 or 1,
+                                             memBlinkState and 0.1 or 0.85,
+                                             memBlinkState and 0.1 or 0.0, 1)
+            end
+        end
+        consolePriorityTimer = 99
+        return
+    end
+
+    -- Salir modo critico (por reload o deshabilitado)
+    if memCritActive and (count < MEM_CRIT_THRESHOLD or memCritDisabled) then
+        memCritActive = false
+        consolePriorityTimer = 0
+        if MF.consoleText then BigFont(MF.consoleText, 9) end
+        if memAlarmBtn then memAlarmBtn:Hide() end
+    end
+
+    -- Modo advertencia
+    if count >= MEM_WARN_THRESHOLD and not memWarnDisabled and not memCritDisabled then
+        memWarnTimer = memWarnTimer + dt
+        if memWarnTimer >= memWarnInterval then
+            memWarnTimer = 0
+            showMemAlarmBtn(false)
+            if MF.ConsoleMsg then
+                MF.ConsoleMsg("Memoria del addon casi llena. Recomendamos /reload", 1, 0.7, 0.1)
+            end
+        end
+    else
+        if count < MEM_WARN_THRESHOLD then
+            memWarnTimer = 0
+            -- Si baja del umbral (no ocurre en sesion normal), ocultar boton
+            if memAlarmBtn and memAlarmBtn:IsVisible() and not memCritActive then
+                memAlarmBtn:Hide()
+            end
+        end
     end
 end)
 
@@ -1028,7 +1179,7 @@ local DOT_GAP = 2
 -- Los dots empiezan en x = MEMBER_BTN_W + 4 dentro del boton
 -- En el sidePanel el scroll empieza en x=4, asi que offset total = 4 + MEMBER_BTN_W + 4
 local DOTS_PANEL_X = 4 + MEMBER_BTN_W + 4  -- x en sidePanel donde empieza el primer dot
-local LABEL_Y = MEMBER_PANEL_Y - 36         -- fila de labels alineada con botones filtro
+local LABEL_Y = MEMBER_PANEL_Y - 42         -- bajado 6px para no tapar botones de filtro
 
 for di, rd in ipairs(ROLE_DEFS) do
     local lbl = sidePanel:CreateFontString(nil,"OVERLAY","GameFontNormalSmall")
@@ -1153,11 +1304,13 @@ end)
 filterBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
 -- Boton [Reset P] - regresa todos los raiders del lienzo al panel
-local resetPBtn = makePanelBtn("Reset P", FBTN_W3,
-    FBTN_X + FBTN_W + FBTN_GAP + FBTN_W2 + FBTN_GAP, FILTER_Y, 1, 0.5, 0.2)
+local FBTN_W3   = 52   -- ancho boton Reset P
+local FBTN_W4   = 56   -- ancho boton Enviar Roles
+local FBTN_W5   = 52   -- ancho boton Sync Rol
+local resetPX   = FBTN_X + FBTN_W + FBTN_GAP + FBTN_W2 + FBTN_GAP
+local resetPBtn = makePanelBtn("Reset P", FBTN_W3, resetPX, FILTER_Y, 1, 0.5, 0.2)
 resetPBtn:SetScript("OnClick", function()
     if not RM.Permissions.IsRL() then return end
-    -- Eliminar solo los raiders reales (iconos MEMBER_*) del lienzo
     local toRemove = {}
     for iconId, ic in pairs(RM.state.placedIcons) do
         if ic.iconType and string.sub(ic.iconType, 1, 7) == "MEMBER_" then
@@ -1168,9 +1321,7 @@ resetPBtn:SetScript("OnClick", function()
         RM.Icons.ApplyRemove(iconId)
         RM.Network.SendRemove(iconId)
     end
-    if MF.ConsoleMsg then
-        MF.ConsoleMsg("Raiders devueltos al panel.", 0.8, 0.9, 1)
-    end
+    if MF.ConsoleMsg then MF.ConsoleMsg("Raiders devueltos al panel.", 0.8, 0.9, 1) end
 end)
 resetPBtn:SetScript("OnEnter", function()
     GameTooltip:SetOwner(resetPBtn,"ANCHOR_LEFT")
@@ -1179,6 +1330,116 @@ resetPBtn:SetScript("OnEnter", function()
     GameTooltip:Show()
 end)
 resetPBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+-- Boton [Enviar Roles] - solo Assist puede usarlo (manda roles al RL)
+local enviarRolesX = resetPX + FBTN_W3 + FBTN_GAP
+local enviarRolesBtn = makePanelBtn("Env.Rol", FBTN_W4, enviarRolesX, FILTER_Y, 0.3, 0.8, 0.5)
+local enviarRolesLastSent = 0  -- throttle para no saturar canal
+
+local function updateEnviarRolesBtn()
+    -- Solo Assist activo (CanPlace pero no RL)
+    local isActiveAssist = RM.Permissions.CanPlace() and not RM.Permissions.IsRL()
+    if isActiveAssist then
+        enviarRolesBtn:SetAlpha(1.0)
+        enviarRolesBtn:EnableMouse(true)
+        enviarRolesBtn.labelText:SetTextColor(0.3, 0.9, 0.5, 1)
+    else
+        enviarRolesBtn:SetAlpha(0.35)
+        enviarRolesBtn:EnableMouse(false)
+        enviarRolesBtn.labelText:SetTextColor(0.4, 0.4, 0.4, 1)
+    end
+end
+MF.UpdateEnviarRolesBtn = updateEnviarRolesBtn
+updateEnviarRolesBtn()
+
+enviarRolesBtn:SetScript("OnClick", function()
+    -- Solo Assist activo (CanPlace pero no RL)
+    if not RM.Permissions.CanPlace() or RM.Permissions.IsRL() then
+        MF.ConsoleMsg("Solo los Asistentes pueden enviar roles.", 1,0.4,0.2)
+        return
+    end
+    -- Throttle: solo 1 envio cada 15 segundos
+    local now = GetTime()
+    if (now - enviarRolesLastSent) < 15 then
+        local remaining = math.ceil(15 - (now - enviarRolesLastSent))
+        MF.ConsoleMsg("Espera "..remaining.."s antes de enviar roles de nuevo.", 1,0.6,0.2)
+        return
+    end
+    -- Recopilar roles locales
+    local queue = {}
+    for name, role in pairs(RM.state.memberRoles) do
+        if name and name ~= "" and role then
+            table.insert(queue, {name=name, role=role})
+        end
+    end
+    local count = table.getn(queue)
+    if count == 0 then
+        MF.ConsoleMsg("No tienes roles asignados para enviar.", 0.7,0.7,0.7)
+        return
+    end
+    enviarRolesLastSent = now
+    MF.ConsoleMsg("Enviando "..count.." roles al RL...", 0.4, 0.9, 0.5)
+    -- Enviar con delay de 0.1s entre mensajes para no saturar canal
+    local idx = 1
+    local elapsed2 = 0
+    local propFrame = CreateFrame("Frame","RaidMarkRoleProposeFrame")
+    propFrame:SetScript("OnUpdate", function()
+        elapsed2 = elapsed2 + arg1
+        if elapsed2 >= 0.1 then
+            elapsed2 = 0
+            if idx <= table.getn(queue) then
+                local entry = queue[idx]
+                RM.Network.SendRaw("ROLEPROPOSE;" .. entry.name .. ";" .. entry.role)
+                idx = idx + 1
+            else
+                propFrame:SetScript("OnUpdate", nil)
+                MF.ConsoleMsg("Propuesta de "..count.." roles enviada.", 0.4, 0.9, 0.5)
+            end
+        end
+    end)
+end)
+enviarRolesBtn:SetScript("OnEnter", function()
+    GameTooltip:SetOwner(enviarRolesBtn,"ANCHOR_LEFT")
+    GameTooltip:SetText("Enviar Roles al RL")
+    GameTooltip:AddLine("Propone tus roles al RL (solo rellena huecos)", 0.7,0.7,0.7,true)
+    GameTooltip:AddLine("Solo disponible para Asistentes", 0.6,0.8,0.6,true)
+    GameTooltip:Show()
+end)
+enviarRolesBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+-- Boton [Sync Rol] - solo RL puede usarlo (incluye roles en el proximo sync)
+local syncRolX   = enviarRolesX + FBTN_W4 + FBTN_GAP
+local syncRolBtn = makePanelBtn("Sync Rol", FBTN_W5, syncRolX, FILTER_Y, 0.4, 0.7, 1)
+MF.syncRolBtn    = syncRolBtn
+
+local function updateSyncRolBtn()
+    if RM.Permissions.IsRL() then
+        syncRolBtn:SetAlpha(1.0)
+        syncRolBtn:EnableMouse(true)
+        syncRolBtn.labelText:SetTextColor(0.4, 0.8, 1, 1)
+    else
+        syncRolBtn:SetAlpha(0.35)
+        syncRolBtn:EnableMouse(false)
+        syncRolBtn.labelText:SetTextColor(0.4, 0.4, 0.4, 1)
+    end
+end
+MF.UpdateSyncRolBtn = updateSyncRolBtn
+updateSyncRolBtn()
+
+syncRolBtn:SetScript("OnClick", function()
+    if not RM.Permissions.IsRL() then return end
+    -- Mandar todos los roles via RosterSync
+    RM.Network.SendAllRoles()
+    MF.ConsoleMsg("Roles sincronizados al raid.", 0.4, 1, 0.6)
+end)
+syncRolBtn:SetScript("OnEnter", function()
+    GameTooltip:SetOwner(syncRolBtn,"ANCHOR_LEFT")
+    GameTooltip:SetText("Sync Roles")
+    GameTooltip:AddLine("Envia todos los roles asignados al raid", 0.7,0.7,0.7,true)
+    GameTooltip:AddLine("Solo disponible para el RL", 0.6,0.8,1,true)
+    GameTooltip:Show()
+end)
+syncRolBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
 -- Inicializar filtro activo
 MF.activeFilter = nil
@@ -1234,15 +1495,25 @@ for i, def in ipairs(ASSIGN_DEFS) do
             MF.ConsoleOffline("Estas en modo offline! Network deshabilitado.")
             return
         end
-        if not RM.Permissions.IsRL() then return end
-        if assignActive or totalActive then return end
+        if not RM.Permissions.CanPlace() then
+            MF.ConsoleMsg("Solo el RL o Asistente puede usar auto-asignar.", 1,0.4,0.2)
+            return
+        end
+        if assignActive or totalActive or assignCooldown > 0 then
+            if assignCooldown > 0 then
+                MF.ConsoleMsg("Auto-asignar bloqueado ("..math.ceil(assignCooldown).."s).", 1,0.6,0.2)
+            end
+            return
+        end
         if capturedDef.key == "EDIT" then return end
         if GetNumRaidMembers() == 0 then
-            DEFAULT_CHAT_FRAME:AddMessage("RaidMark: Debes estar en un raid para usar auto-asignar.")
+            if MF.ConsoleMsg then MF.ConsoleMsg("Debes estar en un raid para usar auto-asignar.", 1,0.5,0.2) end
             return
         end
 
         assignActive     = true
+        -- Bloquear a todos en el raid durante la duracion del assign
+        RM.Network.SendRaw("ASSIGN_COOLDOWN;15")
         assignRole       = capturedDef.key
         assignTimer      = 0
         assignResponders = {}
@@ -1281,8 +1552,10 @@ for i, def in ipairs(ASSIGN_DEFS) do
 
             if elapsed >= assignDuration then
                 -- Fin de la sesion
-                assignActive = false
-                assignRole   = nil
+                assignActive   = false
+                assignRole     = nil
+                assignCooldown = ASSIGN_COOLDOWN_TIME
+                RM.Network.SendRaw("ASSIGN_COOLDOWN;10")
                 countFrame:SetScript("OnUpdate", nil)
                 for _, b in ipairs(assignBtns) do
                     b:SetAlpha(1.0)
@@ -1338,10 +1611,18 @@ autoTotalBtn:EnableMouse(true)
 local TOTAL_DURATION = 20
 
 autoTotalBtn:SetScript("OnClick", function()
-    if not RM.Permissions.IsRL() then return end
-    if assignActive or totalActive then return end
+    if not RM.Permissions.CanPlace() then
+        MF.ConsoleMsg("Solo el RL o Asistente puede usar auto-total.", 1,0.4,0.2)
+        return
+    end
+    if assignActive or totalActive or assignCooldown > 0 then
+        if assignCooldown > 0 then
+            MF.ConsoleMsg("Auto-asignar bloqueado ("..math.ceil(assignCooldown).."s).", 1,0.6,0.2)
+        end
+        return
+    end
     if GetNumRaidMembers() == 0 then
-        DEFAULT_CHAT_FRAME:AddMessage("RaidMark: Debes estar en un raid.")
+        if MF.ConsoleMsg then MF.ConsoleMsg("Debes estar en un raid.", 1,0.5,0.2) end
         return
     end
     if RM.state.offlineMode then
@@ -1349,6 +1630,8 @@ autoTotalBtn:SetScript("OnClick", function()
         return
     end
     totalActive      = true
+    -- Bloquear a todos en el raid durante la duracion del total
+    RM.Network.SendRaw("ASSIGN_COOLDOWN;25")
     assignResponders = {}
     -- NO limpiar roles previos: las respuestas sobreescriben individualmente
 
@@ -1384,7 +1667,9 @@ autoTotalBtn:SetScript("OnClick", function()
         end
 
         if elapsed >= TOTAL_DURATION then
-            totalActive = false
+            totalActive    = false
+            assignCooldown = ASSIGN_COOLDOWN_TIME
+            RM.Network.SendRaw("ASSIGN_COOLDOWN;10")
             totalFrame:SetScript("OnUpdate", nil)
             for _, b in ipairs(assignBtns) do b:SetAlpha(1.0) end
             autoTotalBtn:SetBackdropBorderColor(0.8, 0.6, 1, 1)
@@ -1431,6 +1716,7 @@ function MF.OnRaidChat(msg, sender)
             MF._totalRespondedAll[sender] = true
             RM.state.memberRoles[sender]  = role
             if RaidMarkDB then RaidMarkDB.memberRoles = RM.state.memberRoles end
+            RM.Network.SendRole(sender, role)
         end
         return
     end
@@ -1446,6 +1732,7 @@ function MF.OnRaidChat(msg, sender)
         assignResponders[sender] = true
         RM.state.memberRoles[sender] = assignRole
         if RaidMarkDB then RaidMarkDB.memberRoles = RM.state.memberRoles end
+        RM.Network.SendRole(sender, assignRole)
     end
 end
 
@@ -1637,7 +1924,7 @@ function MF.RebuildRosterButtons()
                 refreshDot()
 
                 dot:SetScript("OnClick", function()
-                    if not RM.Permissions.IsRL() then return end
+                    if not RM.Permissions.CanPlace() then return end
                     if RM.state.memberRoles[capturedName] == capturedKey then
                         RM.state.memberRoles[capturedName] = nil
                     else
@@ -1866,7 +2153,7 @@ local function buildToolbar()
                 MF.syncPBtn:SetBackdropBorderColor(0.2, 0.7, 0.3, 1)
             end
         else
-            DEFAULT_CHAT_FRAME:AddMessage("RaidMark: Sin permisos.")
+            if MF.ConsoleMsg then MF.ConsoleMsg("Sin permisos.", 1,0.3,0.3) end
         end
     end)
     clearBtn:SetScript("OnEnter", function()
@@ -1880,6 +2167,7 @@ local function buildToolbar()
 -- [Sync] -- visible para todos, pide estado al RL
     local syncBtn = makeToolbarBtn("Sync", 80)
     syncBtn.labelText:SetTextColor(0.4, 0.8, 1, 1)
+    MF.syncBtn = syncBtn  -- referencia para bloquear durante sync
     syncBtn:SetPoint("LEFT", toolbar, "LEFT", xOff, 0)
     syncBtn:SetScript("OnClick", function()
         if RM.state.offlineMode then
@@ -1905,7 +2193,7 @@ local function buildToolbar()
             RM.Network.SendSyncResponse()
             -- Enviar roster actualizado
             RM.Network.SendRosterSync()
-            DEFAULT_CHAT_FRAME:AddMessage("RaidMark: Roster y estado sincronizados.")
+            if MF.ConsoleMsg then MF.ConsoleMsg("Sync enviado al raid.", 0.4,1,0.4) end
         else
             -- Si no soy RL, pedir al RL
             RM.Network.SendSyncRequest()
@@ -1949,6 +2237,38 @@ local function buildToolbar()
     ptrLabel:SetText("Puntero / Alt")
     BigFont(ptrLabel, 8)
     ptrLabel:SetTextColor(0.7, 0.7, 0.7, 1)
+
+    -- Boton rojo encima del checkbox (limpiar punteros en red, solo RL)
+    local ptrClearBtn = CreateFrame("Button", nil, toolbar)
+    ptrClearBtn:SetWidth(12); ptrClearBtn:SetHeight(12)
+    ptrClearBtn:SetPoint("BOTTOM", ptrCheck, "TOP", 0, 2)
+    ptrClearBtn:SetBackdrop({
+        bgFile   = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        edgeSize = 5, insets={left=1,right=1,top=1,bottom=1}
+    })
+    ptrClearBtn:SetBackdropColor(0.7, 0.05, 0.05, 1)
+    ptrClearBtn:SetBackdropBorderColor(1, 0.2, 0.2, 1)
+    ptrClearBtn:EnableMouse(true)
+    ptrClearBtn:SetScript("OnClick", function()
+        if not RM.Permissions.IsRL() then
+            MF.ConsoleMsg("Solo el RL puede limpiar los punteros.", 1, 0.3, 0.3)
+            return
+        end
+        for _, slot in ipairs(RM.state.pointerSlots) do
+            slot.owner = nil; slot.lastX = nil; slot.lastY = nil
+        end
+        MF.UpdatePointerSlotUI()
+        RM.Network.SendRaw("PTR_CLEAR")
+        MF.ConsoleMsg("Punteros en red limpiados.", 0.4, 1, 0.4)
+    end)
+    ptrClearBtn:SetScript("OnEnter", function()
+        GameTooltip:SetOwner(ptrClearBtn, "ANCHOR_TOP")
+        GameTooltip:SetText("Limpiar punteros en red")
+        GameTooltip:AddLine("Solo disponible para el RL", 0.7,0.7,0.7,true)
+        GameTooltip:Show()
+    end)
+    ptrClearBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
     ptrCheck:SetScript("OnClick", function()
         if not RM.Permissions.CanPlace() then
@@ -2056,9 +2376,9 @@ local function buildToolbar()
     xOff = xOff + 4*(SLOT_SZ+3) + 8
 
     -- Mini consola informativa (cuadro azul)
-    local consoleW = 160
+    -- Ancho dinamico: se extiende hasta justo antes del bloque de escenas (sceneBar)
+    local consoleW = 160  -- ancho minimo de fallback
     local consoleFrame = CreateFrame("Frame", nil, toolbar)
-    consoleFrame:SetWidth(consoleW)
     consoleFrame:SetHeight(TOOLBAR_H - 10)
     consoleFrame:SetPoint("LEFT", toolbar, "LEFT", xOff, 0)
     -- SetClipsChildren no disponible en vanilla 1.12
@@ -2292,6 +2612,13 @@ local function buildToolbar()
     if RM.Scenes then
         RM.Scenes.Init()
         RM.Scenes.BuildUI(toolbar, MF.syncPBtn, makeToolbarBtn)
+        -- Ajustar el ancho del consoleFrame para llegar hasta el sceneBar
+        local sb = getglobal("RaidMarkSceneBar")
+        if sb then
+            consoleFrame:SetPoint("RIGHT", sb, "LEFT", -8, 0)
+        else
+            consoleFrame:SetWidth(consoleW)
+        end
     end
     MF.assistBtn:SetScript("OnClick", function()
         if RM.Permissions.IsRL() then
@@ -2313,7 +2640,6 @@ end
 
 function MF.UpdateAssistBtn()
     if not MF.assistBtn then return end
-    -- El boton es visible para todos, pero con colores distintos segun estado
     MF.assistBtn:Show()
     if RM.state.assistCanMove then
         MF.assistBtn.labelText:SetText("Assist: ON")
@@ -2324,6 +2650,9 @@ function MF.UpdateAssistBtn()
         MF.assistBtn.labelText:SetTextColor(0.6, 0.6, 0.6, 1)
         MF.assistBtn:SetBackdropBorderColor(0.5, 0.42, 0.22, 0.9)
     end
+    -- Actualizar botones de rol segun permisos
+    if MF.UpdateEnviarRolesBtn then MF.UpdateEnviarRolesBtn() end
+    if MF.UpdateSyncRolBtn     then MF.UpdateSyncRolBtn()     end
 end
 
 
@@ -2362,6 +2691,8 @@ MF.scaleBtn:SetScript("OnClick", function()
     
     -- Aplicar la escala a todo el marco principal
     mainFrame:SetScale(RM.state.currentScale)
+    -- Persistir escala
+    if RaidMarkDB then RaidMarkDB.savedScale = RM.state.currentScale end
 end)
 
 
@@ -2384,11 +2715,35 @@ end
 function MF.Show()
     mainFrame:Show()
     RM.state.mapVisible = true
+    -- Restaurar escala y posicion guardadas
+    if RaidMarkDB then
+        if RaidMarkDB.savedScale then
+            RM.state.currentScale = RaidMarkDB.savedScale
+            mainFrame:SetScale(RM.state.currentScale)
+            local pct = math.floor(RM.state.currentScale * 100 + 0.5)
+            if MF.scaleBtn then
+                MF.scaleBtn.labelText:SetText("Scale: "..pct.."%")
+            end
+        end
+        if RaidMarkDB.savedX and RaidMarkDB.savedY then
+            mainFrame:ClearAllPoints()
+            mainFrame:SetPoint(
+                RaidMarkDB.savedPoint or "CENTER",
+                UIParent,
+                RaidMarkDB.savedPoint or "CENTER",
+                RaidMarkDB.savedX,
+                RaidMarkDB.savedY)
+        end
+    end
     if RM.state.currentMap then
         MF.LoadMap(RM.state.currentMap)
     end
     MF.RebuildRosterButtons()
     MF.UpdateAssistBtn()
+end
+
+function MF.SetAssignCooldown(seconds)
+    assignCooldown = seconds or 10
 end
 
 function MF.Hide()
@@ -2440,7 +2795,7 @@ function MF.SaveToSlot()
         })
     end
 
-    DEFAULT_CHAT_FRAME:AddMessage("RaidMark: Slot " .. id .. " guardado.")
+    if MF.ConsoleMsg then MF.ConsoleMsg("Slot "..id.." guardado.", 0.4,1,0.6) end
     if RM.state.editMode then MF.ToggleEditMode() end
 end
 

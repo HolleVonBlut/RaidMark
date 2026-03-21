@@ -7,6 +7,10 @@ local RM = RaidMark
 RM.Icons = {}
 local IC = RM.Icons
 
+-- -- Contador de frames creados en la sesion (para aviso de memoria) --
+-- Solo cuenta frames de iconos del lienzo, no UI frames del panel
+IC.frameCount = 0
+
 -- -- Pool de frames de iconos activos ----------------------------
 -- [iconId] = frame
 IC.activeFrames = {}
@@ -63,6 +67,7 @@ local function createArrowFrame(iconId, iconType, x, y)
     local stretchH = baseSize
 
     -- Contenedor principal (invisible, solo agrupa hitbox + textura)
+    IC.frameCount = IC.frameCount + 3  -- container + texFrame + hitbox
     local container = CreateFrame("Frame", "RaidMarkArrow_"..iconId, mapFrame)
     container:SetWidth(1)
     container:SetHeight(1)
@@ -225,6 +230,7 @@ local function createIconFrame(iconId, iconType, x, y, label)
     local texPath   = RM.ICON_TEXTURE[iconType]
 
     -- Frame contenedor
+    IC.frameCount = IC.frameCount + 1  -- 1 frame por icono normal
     local f = CreateFrame("Button", "RaidMarkIcon_" .. iconId, mapFrame)
     f:SetWidth(size)
     f:SetHeight(size)
@@ -282,9 +288,14 @@ local function createIconFrame(iconId, iconType, x, y, label)
     f:RegisterForDrag("LeftButton")
 
     f:SetScript("OnDragStart", function()
-        -- SEGURO: Si ALT está presionado, evitamos que inicie el movimiento del icono
         if IsAltKeyDown() then return end
-        
+        -- Fakes solo movibles en modo offline
+        if RM.IsOfflineRoleIcon and RM.IsOfflineRoleIcon(iconType) and not RM.state.offlineMode then
+            if RM.MapFrame and RM.MapFrame.ConsoleMsg then
+                RM.MapFrame.ConsoleMsg("Solo movibles en Modo Offline.", 1, 0.5, 0.1)
+            end
+            return
+        end
         if not RM.Permissions.CanPlace() then
             UIErrorsFrame:AddMessage("No tienes permisos. No eres RL ni Asistente.", 1, 0.3, 0.3, 1, 3)
             return

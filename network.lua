@@ -114,6 +114,41 @@ function N.SendClear()
     N.SendRaw("CLEAR")
 end
 
+-- Enviar asignacion de rol de un raider al grupo
+function N.SendRole(playerName, role)
+    if not playerName or playerName == "" then return end
+    local roleStr = role or "NONE"
+    N.SendRaw("ROLE" .. MSG_SEP .. playerName .. MSG_SEP .. roleStr)
+end
+
+-- Enviar todos los roles con micro-delay para no saturar canal
+function N.SendAllRoles()
+    if not RM.state.memberRoles then return end
+    local queue = {}
+    for name, role in pairs(RM.state.memberRoles) do
+        if name and name ~= "" and role then
+            table.insert(queue, {name=name, role=role})
+        end
+    end
+    if table.getn(queue) == 0 then return end
+    local idx = 1
+    local elapsed = 0
+    local roleFrame = CreateFrame("Frame","RaidMarkRoleSync")
+    roleFrame:SetScript("OnUpdate", function()
+        elapsed = elapsed + arg1
+        if elapsed >= 0.1 then
+            elapsed = 0
+            if idx <= table.getn(queue) then
+                local entry = queue[idx]
+                N.SendRaw("ROLE"..MSG_SEP..entry.name..MSG_SEP..entry.role)
+                idx = idx + 1
+            else
+                roleFrame:SetScript("OnUpdate",nil)
+            end
+        end
+    end)
+end
+
 function N.SendMapChange(mapKey)
     N.SendRaw("MAP" .. MSG_SEP .. mapKey)
 end
@@ -146,40 +181,142 @@ end
 
 function N.SendSyncRequest()
     N.SendRaw("SYNC_REQ")
-    DEFAULT_CHAT_FRAME:AddMessage("RaidMark: Solicitando sincronizacion...")
+    if RM.MapFrame and RM.MapFrame.ConsoleMsg then RM.MapFrame.ConsoleMsg("Solicitando sync...", 0.4,0.8,1) end
 end
 
+-- Estado del sync en progreso
+N.syncInProgress = false
+
 function N.SendSyncResponse()
-    -- Mandar CLEAR primero para que los receptores limpien su estado anterior
-    -- Esto evita que iconos viejos queden "fantasmas" en clientes que cambiaron de RL
+    if N.syncInProgress then return end  -- evitar spam
+
+    -- Recopilar iconos a enviar (excluir fakes y hidden)
+    local toSend = {}
+    for iconId, data in pairs(RM.state.placedIcons) do
+        if not (RM.IsOfflineRoleIcon and RM.IsOfflineRoleIcon(data.iconType))
+           and not data.hidden then
+            table.insert(toSend, {id=iconId, data=data})
+        end
+    end
+    local total = table.getn(toSend)
+
+    -- Elegir delay segun tabla
+    local delay
+    if     total <= 10 then delay = 0
+    elseif total <= 25 then delay = 0.05
+    elseif total <= 50 then delay = 0.15
+    else                    delay = 0.2
+    end
+
+    -- Enviar CLEAR + MAP + PERMS inmediatamente
     N.SendRaw("CLEAR")
     if RM.state.currentMap then
         N.SendRaw("MAP" .. MSG_SEP .. RM.state.currentMap)
     end
     local val = RM.state.assistCanMove and "1" or "0"
     N.SendRaw("PERMS" .. MSG_SEP .. val)
-    for iconId, data in pairs(RM.state.placedIcons) do
-        -- Nunca broadcastear fakes (iconos de posicionamiento offline)
-        if RM.IsOfflineRoleIcon and RM.IsOfflineRoleIcon(data.iconType) then
-            -- skip
-        elseif not data.hidden then
-            local cr = data.colorR   or 1
-            local cg = data.colorG   or 1
-            local cb = data.colorB   or 1
-            local sw = data.stretchW or 0
-            local sh = data.stretchH or 0
-            N.SendRaw("PLACE" .. MSG_SEP .. iconId .. MSG_SEP
-                              .. data.iconType .. MSG_SEP
-                              .. string.format("%.4f", data.x) .. MSG_SEP
-                              .. string.format("%.4f", data.y) .. MSG_SEP
-                              .. ((data.label and data.label ~= "") and data.label or "_") .. MSG_SEP
-                              .. string.format("%.3f", cr) .. MSG_SEP
-                              .. string.format("%.3f", cg) .. MSG_SEP
-                              .. string.format("%.3f", cb) .. MSG_SEP
-                              .. sw .. MSG_SEP .. sh)
+
+    if total == 0 then
+        if RM.MapFrame and RM.MapFrame.ConsoleMsg then
+            RM.MapFrame.ConsoleMsg("Sync enviado.", 0.4,1,0.4)
         end
+        return
     end
-    DEFAULT_CHAT_FRAME:AddMessage("RaidMark: Estado sincronizado enviado.")
+
+    -- Bloquear boton Sync y moves durante el envio
+    N.syncInProgress = true
+    local savedMoves  = pendingMoves
+    pendingMoves      = {}   -- pausar moves
+
+    if RM.MapFrame and RM.MapFrame.syncBtn then
+        RM.MapFrame.syncBtn:SetAlpha(0.4)
+        RM.MapFrame.syncBtn:EnableMouse(false)
+    end
+
+    -- Envio con delay usando OnUpdate
+    local idx      = 1
+    local elapsed  = 0
+    local sentSoFar = 0
+    local animPhase = 0
+    local animTimer = 0
+    local animFrames = {
+        "Sync [.       ] 0%",
+        "Sync [==      ]",
+        "Sync [====    ]",
+        "Sync [======  ]",
+        "Sync [========]",
+    }
+
+    local syncFrame = CreateFrame("Frame","RaidMarkSyncProgress")
+    syncFrame:SetScript("OnUpdate", function()
+        local dt = arg1
+
+        -- Actualizar barra de progreso en box (cada 1 segundo)
+        animTimer = animTimer + dt
+        if animTimer >= 1.0 then
+            animTimer = 0
+            animPhase = math.mod(animPhase, 4) + 1
+            local pct  = math.floor(sentSoFar / total * 100 + 0.5)
+            local bars  = math.floor(pct / 12.5 + 0.5)  -- 0-8 barras
+            local filled = string.rep("=", bars)
+            local empty  = string.rep(" ", 8 - bars)
+            local msg    = "Sync ["..filled..empty.."] "..pct.."%"
+            if RM.MapFrame and RM.MapFrame.ConsoleMsg then
+                RM.MapFrame.ConsoleMsg(msg, 0.4, 0.8, 1)
+            end
+        end
+
+        -- Si no hay delay, enviar todos de golpe en este frame
+        if delay == 0 then
+            for _, entry in ipairs(toSend) do
+                local data = entry.data
+                local cr = data.colorR or 1; local cg = data.colorG or 1
+                local cb = data.colorB or 1; local sw = data.stretchW or 0
+                local sh = data.stretchH or 0
+                N.SendRaw("PLACE"..MSG_SEP..entry.id..MSG_SEP..data.iconType..MSG_SEP
+                    ..string.format("%.4f",data.x)..MSG_SEP..string.format("%.4f",data.y)..MSG_SEP
+                    ..((data.label and data.label~="") and data.label or "_")..MSG_SEP
+                    ..string.format("%.3f",cr)..MSG_SEP..string.format("%.3f",cg)..MSG_SEP
+                    ..string.format("%.3f",cb)..MSG_SEP..sw..MSG_SEP..sh)
+            end
+            sentSoFar = total
+            idx = total + 1
+        else
+            -- Envio con delay
+            elapsed = elapsed + dt
+            if elapsed >= delay and idx <= total then
+                elapsed = 0
+                local entry = toSend[idx]
+                local data  = entry.data
+                local cr = data.colorR or 1; local cg = data.colorG or 1
+                local cb = data.colorB or 1; local sw = data.stretchW or 0
+                local sh = data.stretchH or 0
+                N.SendRaw("PLACE"..MSG_SEP..entry.id..MSG_SEP..data.iconType..MSG_SEP
+                    ..string.format("%.4f",data.x)..MSG_SEP..string.format("%.4f",data.y)..MSG_SEP
+                    ..((data.label and data.label~="") and data.label or "_")..MSG_SEP
+                    ..string.format("%.3f",cr)..MSG_SEP..string.format("%.3f",cg)..MSG_SEP
+                    ..string.format("%.3f",cb)..MSG_SEP..sw..MSG_SEP..sh)
+                idx        = idx + 1
+                sentSoFar  = sentSoFar + 1
+            end
+        end
+
+        -- Fin del envio
+        if idx > total then
+            syncFrame:SetScript("OnUpdate", nil)
+            N.syncInProgress = false
+            -- Restaurar moves pausados
+            for k,v in pairs(savedMoves) do pendingMoves[k] = v end
+            -- Restaurar boton Sync
+            if RM.MapFrame and RM.MapFrame.syncBtn then
+                RM.MapFrame.syncBtn:SetAlpha(1.0)
+                RM.MapFrame.syncBtn:EnableMouse(true)
+            end
+            if RM.MapFrame and RM.MapFrame.ConsoleMsg then
+                RM.MapFrame.ConsoleMsg("Sync enviado ("..total.." iconos).", 0.4,1,0.4)
+            end
+        end
+    end)
 end
 
 -- NUEVA FUNCION: Enviar lista de miembros
@@ -202,7 +339,7 @@ function N.SendRosterSync()
         N.SendRaw("ROSTER_ADD" .. MSG_SEP .. memberStr)
     end
     
-    DEFAULT_CHAT_FRAME:AddMessage("RaidMark: Roster sincronizado (" .. count .. " miembros).")
+    if RM.MapFrame and RM.MapFrame.ConsoleMsg then RM.MapFrame.ConsoleMsg("Roster sync: "..count.." miembros.", 0.4,1,0.6) end
 end
 
 -- -- Recepcion ---------------------------------------------------
@@ -327,6 +464,49 @@ function N.OnReceive(msg, channel, sender)
         if not RM.Permissions.SenderIsRL(sender) then return end
         RM.state.assistCanMove = (parts[2] == "1")
         if RM.MapFrame and RM.MapFrame.UpdateAssistBtn then RM.MapFrame.UpdateAssistBtn() end
+
+    elseif cmd == "ROLE" then
+        -- Solo aceptar roles del RL
+        if not RM.Permissions.SenderIsRL(sender) then return end
+        if RM.state.offlineMode then return end
+        local playerName = parts[2]
+        local role       = parts[3]
+        if playerName and playerName ~= "" then
+            if role == "NONE" or role == "" or role == nil then
+                RM.state.memberRoles[playerName] = nil
+            else
+                RM.state.memberRoles[playerName] = role
+            end
+            if RaidMarkDB then RaidMarkDB.memberRoles = RM.state.memberRoles end
+            if RM.MapFrame and RM.MapFrame.RebuildRosterButtons then
+                RM.MapFrame.RebuildRosterButtons()
+            end
+        end
+
+    elseif cmd == "ROLEPROPOSE" then
+        -- Assist propone roles al RL: solo rellena huecos (no sobreescribe)
+        if not RM.Permissions.IsRL() then return end
+        if RM.state.offlineMode then return end
+        -- Formato: ROLEPROPOSE;nombre;rol (separado por MSG_SEP como el resto)
+        local pName = parts[2]
+        local pRole = parts[3]
+        if pName and pRole and pName ~= "" and pRole ~= "" then
+            -- Solo aplicar si el raider NO tiene rol asignado aun
+            if not RM.state.memberRoles[pName] then
+                RM.state.memberRoles[pName] = pRole
+                if RaidMarkDB then RaidMarkDB.memberRoles = RM.state.memberRoles end
+                if RM.MapFrame and RM.MapFrame.RebuildRosterButtons then
+                    RM.MapFrame.RebuildRosterButtons()
+                end
+            end
+        end
+
+    elseif cmd == "ASSIGN_COOLDOWN" then
+        -- Bloquear localmente por la duracion indicada
+        local duration = tonumber(parts[2]) or 10
+        if RM.MapFrame and RM.MapFrame.SetAssignCooldown then
+            RM.MapFrame.SetAssignCooldown(duration)
+        end
 
     elseif cmd == "VER" then
         local theirVer = tonumber(parts[2]) or 0

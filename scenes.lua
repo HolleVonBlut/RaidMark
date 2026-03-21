@@ -32,11 +32,10 @@ end
 local function timestamp() return date("%d/%m %H:%M") end
 
 function SC.Save()
-    if not RM.Permissions.IsRL() then
-        DEFAULT_CHAT_FRAME:AddMessage("RaidMark: Solo el RL puede guardar."); return
-    end
+    -- Todos pueden guardar localmente (RL, Assist, Raider)
+    -- Solo el RL puede cargar al lienzo (en SC.Load)
     if not SC.currentSlot then
-        DEFAULT_CHAT_FRAME:AddMessage("RaidMark: Selecciona un slot (1-4)."); return
+        if RM.MapFrame and RM.MapFrame.ConsoleMsg then RM.MapFrame.ConsoleMsg("Selecciona un slot (1-4).", 1,0.5,0.2) end; return
     end
     -- Verificar: si el lienzo tiene fakes pero NO estamos en modo offline, bloquear
     local hasFakes = false
@@ -66,7 +65,7 @@ function SC.Save()
     if iconCount == 0 then
         setSlotData(SC.currentGrand, SC.currentSlot, nil)
         SC.RefreshUI()
-        DEFAULT_CHAT_FRAME:AddMessage("RaidMark: Slot " .. SC.currentSlot .. " limpiado.")
+        if RM.MapFrame and RM.MapFrame.ConsoleMsg then RM.MapFrame.ConsoleMsg("Slot "..SC.currentSlot.." limpiado.", 0.7,0.7,0.7) end
         return
     end
     setSlotData(SC.currentGrand, SC.currentSlot, {
@@ -78,16 +77,25 @@ function SC.Save()
         isPosi   = isPosiMap,
     })
     SC.RefreshUI()
-    DEFAULT_CHAT_FRAME:AddMessage("RaidMark: Escena guardada GS"..SC.currentGrand.." Slot "..SC.currentSlot)
+    if RM.MapFrame and RM.MapFrame.ConsoleMsg then RM.MapFrame.ConsoleMsg("Slot "..SC.currentSlot.." guardado ("..timestamp()..")", 0.4,1,0.6) end
 end
 
 function SC.Load(grand, slot)
-    if not RM.Permissions.IsRL() then return end
+    -- En modo offline cualquiera puede cargar (es local, no broadcastea)
+    local inOffline = RM.state and RM.state.offlineMode
+    if not inOffline and not RM.Permissions.IsRL() then
+        if RM.MapFrame and RM.MapFrame.ConsoleMsg then
+            RM.MapFrame.ConsoleMsg("Solo el RL puede cargar escenas al lienzo.", 1,0.3,0.3)
+        end
+        return
+    end
     local data = getSlotData(grand, slot)
     if not data then return end
-    RM.ClearAll(); RM.Network.SendClear()
+    RM.ClearAll()
+    if not inOffline then RM.Network.SendClear() end
     if data.mapKey and data.mapKey ~= "" then
-        RM.SetMap(data.mapKey); RM.Network.SendMapChange(data.mapKey)
+        RM.SetMap(data.mapKey)
+        if not inOffline then RM.Network.SendMapChange(data.mapKey) end
     end
     if data.nextId then RM.state.nextIconId = data.nextId end
     for id, ic in pairs(data.icons) do
@@ -234,8 +242,9 @@ function SC.BuildUI(toolbar, anchorRight, makeToolbarBtn)
 
     local sceneBar = CreateFrame("Frame", "RaidMarkSceneBar", toolbar)
     sceneBar:SetHeight(24)
-    sceneBar:SetWidth(8 + 28 + GAP + 4*(SLOT_W+GAP) + 8 + 50)
-    sceneBar:SetPoint("RIGHT", anchorRight, "LEFT", -8, 0)
+    -- S(28) + B(28) + sep + 4 slots(26) + GS(50) + gaps + padding
+    sceneBar:SetWidth(8 + 28 + GAP + 28 + GAP + 6 + 4*(SLOT_W+GAP) + 8 + 50)
+    sceneBar:SetPoint("RIGHT", anchorRight, "LEFT", -12, 0)
     sceneBar:SetFrameLevel(toolbar:GetFrameLevel() + 1)
 
     local ix = 0
@@ -267,6 +276,65 @@ function SC.BuildUI(toolbar, anchorRight, makeToolbarBtn)
     end)
     saveBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
+    -- [B] borrar slot seleccionado (con confirmacion)
+    local deletePending = false  -- true = esperando segundo click
+    local deleteBtn = addBtn("[B]", 28)
+    deleteBtn.labelText:SetTextColor(1, 0.3, 0.3, 1)
+    deleteBtn:SetScript("OnClick", function()
+        if not SC.currentSlot then
+            if RM.MapFrame and RM.MapFrame.ConsoleMsg then
+                RM.MapFrame.ConsoleMsg("Selecciona un slot para borrar.", 1,0.5,0.2)
+            end
+            deletePending = false
+            return
+        end
+        local d = getSlotData(SC.currentGrand, SC.currentSlot)
+        if not d then
+            if RM.MapFrame and RM.MapFrame.ConsoleMsg then
+                RM.MapFrame.ConsoleMsg("El slot "..SC.currentSlot.." ya esta vacio.", 0.7,0.7,0.7)
+            end
+            deletePending = false
+            return
+        end
+        if not deletePending then
+            -- Primer click: pedir confirmacion
+            deletePending = true
+            deleteBtn.labelText:SetTextColor(1, 0.7, 0.1, 1)
+            deleteBtn:SetBackdropBorderColor(1, 0.6, 0.1, 1)
+            if RM.MapFrame and RM.MapFrame.ConsoleMsg then
+                RM.MapFrame.ConsoleMsg(
+                    "Seguro de borrar slot GS"..SC.currentGrand.."-"..SC.currentSlot.."? Click [B] de nuevo para confirmar.",
+                    1, 0.6, 0.1)
+            end
+        else
+            -- Segundo click: borrar
+            deletePending = false
+            deleteBtn.labelText:SetTextColor(1, 0.3, 0.3, 1)
+            deleteBtn:SetBackdropBorderColor(0.5, 0.42, 0.22, 0.9)
+            setSlotData(SC.currentGrand, SC.currentSlot, nil)
+            SC.currentSlot = nil
+            SC.RefreshUI()
+            if RM.MapFrame and RM.MapFrame.ConsoleMsg then
+                RM.MapFrame.ConsoleMsg("Slot borrado.", 0.6, 0.6, 0.6)
+            end
+        end
+    end)
+    -- Cancelar pending si se mueve el mouse fuera
+    deleteBtn:SetScript("OnLeave", function()
+        if deletePending then
+            deletePending = false
+            deleteBtn.labelText:SetTextColor(1, 0.3, 0.3, 1)
+            deleteBtn:SetBackdropBorderColor(0.5, 0.42, 0.22, 0.9)
+        end
+        GameTooltip:Hide()
+    end)
+    deleteBtn:SetScript("OnEnter", function()
+        GameTooltip:SetOwner(deleteBtn,"ANCHOR_BOTTOM")
+        GameTooltip:SetText("Borrar slot seleccionado")
+        GameTooltip:AddLine("Primer click = confirmar | Segundo click = borrar", 0.7,0.7,0.7,true)
+        GameTooltip:Show()
+    end)
+
     local s2 = sceneBar:CreateTexture(nil,"ARTWORK")
     s2:SetWidth(1); s2:SetHeight(18)
     s2:SetPoint("LEFT", sceneBar, "LEFT", ix, 0)
@@ -275,14 +343,28 @@ function SC.BuildUI(toolbar, anchorRight, makeToolbarBtn)
 
     -- Slots 1-4
     SC.ui.slotBtns = {}
+    SC.ui.slotChecks = {}   -- FontStrings "v" sobre cada slot
     for i = 1, 4 do
         local sb = addBtn(tostring(i), SLOT_W)
         SC.ui.slotBtns[i] = sb
+        -- "v" flotante centrada encima del boton
+        local chk = sceneBar:CreateFontString(nil,"OVERLAY","GameFontNormal")
+        chk:SetPoint("BOTTOM", sb, "TOP", 0, 1)
+        chk:SetText("")
+        chk:SetTextColor(1, 0.15, 0.15, 1)
+        SC.ui.slotChecks[i] = chk
         local ci = i
         sb:SetScript("OnClick", function()
             local d = getSlotData(SC.currentGrand, ci)
             if d and SC.currentSlot == ci then
-                SC.Load(SC.currentGrand, ci)
+                -- Doble click: RL puede cargar siempre, todos pueden en offline
+                if RM.Permissions.IsRL() or (RM.state and RM.state.offlineMode) then
+                    SC.Load(SC.currentGrand, ci)
+                else
+                    if RM.MapFrame and RM.MapFrame.ConsoleMsg then
+                        RM.MapFrame.ConsoleMsg("Solo el RL puede cargar al lienzo.", 1,0.3,0.3)
+                    end
+                end
             else
                 SC.SelectSlot(ci)
             end
@@ -295,8 +377,12 @@ function SC.BuildUI(toolbar, anchorRight, makeToolbarBtn)
                 GameTooltip:AddLine("Guardado: "..d.savedAt, 0.9,0.9,0.5,true)
                 GameTooltip:AddLine("Mapa: "..(d.mapKey~="" and d.mapKey or "Sin mapa"), 0.6,0.8,1,true)
                 if SC.currentSlot == ci then
-                    GameTooltip:AddLine("Click de nuevo = CARGAR", 0.4,1,0.4,true)
-                    GameTooltip:AddLine("[S] = Sobreescribir", 1,0.7,0.3,true)
+                    if RM.Permissions.IsRL() then
+                        GameTooltip:AddLine("Click de nuevo = CARGAR", 0.4,1,0.4,true)
+                        GameTooltip:AddLine("[S] = Sobreescribir", 1,0.7,0.3,true)
+                    else
+                        GameTooltip:AddLine("[S] = Sobreescribir (guardado local)", 1,0.7,0.3,true)
+                    end
                 else
                     GameTooltip:AddLine("Click para seleccionar", 0.7,0.7,0.7,true)
                 end
@@ -409,29 +495,39 @@ end
 
 function SC.RefreshUI()
     for i = 1, 4 do
-        local btn = SC.ui.slotBtns and SC.ui.slotBtns[i]
+        local btn = SC.ui.slotBtns  and SC.ui.slotBtns[i]
+        local chk = SC.ui.slotChecks and SC.ui.slotChecks[i]
         if btn then
-            local d   = getSlotData(SC.currentGrand, i)
-            local sel = (SC.currentSlot == i)
-            local hasContent = d and d.hasIcons  -- solo amarillo si habia iconos
-            if sel and hasContent then
-                -- seleccionado y tiene contenido real: naranja
-                btn:SetBackdropBorderColor(1,0.5,0.0,1); btn.labelText:SetTextColor(1,0.7,0.2,1)
-            elseif sel then
-                -- seleccionado vacio (o guardado con lienzo vacio): rojo
-                btn:SetBackdropBorderColor(1,0.1,0.1,1); btn.labelText:SetTextColor(1,0.4,0.4,1)
-            elseif hasContent then
-                local d2 = getSlotData(SC.currentGrand, i)
-                if d2 and d2.isPosi then
+            local d          = getSlotData(SC.currentGrand, i)
+            local sel        = (SC.currentSlot == i)
+            local hasContent = d and d.hasIcons
+
+            -- Color del boton segun contenido (nunca cambia por seleccion)
+            if hasContent then
+                if d.isPosi then
                     btn:SetBackdropColor(0.05,0.25,0.05,1)
-                    btn:SetBackdropBorderColor(0.2,1,0.2,1); btn.labelText:SetTextColor(0.4,1,0.4,1)
+                    btn:SetBackdropBorderColor(0.2,1,0.2,1)
+                    btn.labelText:SetTextColor(0.4,1,0.4,1)
                 else
                     btn:SetBackdropColor(0.08,0.08,0.10,1)
-                    btn:SetBackdropBorderColor(1,0.85,0.0,1); btn.labelText:SetTextColor(1,0.95,0.3,1)
+                    btn:SetBackdropBorderColor(1,0.85,0.0,1)
+                    btn.labelText:SetTextColor(1,0.95,0.3,1)
                 end
             else
-                -- vacio o guardado sin iconos: gris
-                btn:SetBackdropBorderColor(0.5,0.42,0.22,0.9); btn.labelText:SetTextColor(0.7,0.7,0.7,1)
+                btn:SetBackdropColor(0.08,0.08,0.10,1)
+                btn:SetBackdropBorderColor(0.5,0.42,0.22,0.9)
+                btn.labelText:SetTextColor(0.7,0.7,0.7,1)
+            end
+
+            -- "v" encima: roja=seleccionado vacio, naranja=seleccionado con contenido
+            if chk then
+                if sel and hasContent then
+                    chk:SetText("v"); chk:SetTextColor(1, 0.55, 0.0, 1)  -- naranja
+                elseif sel then
+                    chk:SetText("v"); chk:SetTextColor(1, 0.15, 0.15, 1) -- rojo
+                else
+                    chk:SetText("")
+                end
             end
         end
     end
