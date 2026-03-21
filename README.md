@@ -21,7 +21,7 @@
 
 ## 📦 Instalación
 
-1. Descarga el `.zip` desde [Releases](../../releases)
+1. Descarga el `.zip` desde github
 2. Extrae la carpeta `RaidMark` en:
    `World of Warcraft\Interface\AddOns\`
 3. Reinicia el juego o escribe `/reload`
