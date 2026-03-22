@@ -268,9 +268,6 @@ WoW vanilla asigna un pool de memoria fijo para addons — independiente de la R
 | Comando | Función |
 |---------|---------|
 | `/rm` | Abrir / cerrar el mapa |
-| `/rm clear` | Limpiar todos los íconos |
-| `/rm map <key>` | Cambiar mapa (ej: `twin_emperors`) |
-| `/rm assist on/off` | Habilitar/deshabilitar permisos de Assist |
 
 ---
 
