@@ -12,6 +12,8 @@ RaidMark_Maps = {
     ["huhuran"]       = { raid = "AQ40", file = "Interface\\AddOns\\RaidMark\\maps\\map_huhuran.tga", label = "Sartura - Guardia Real", u2 = 1.0, v2 = 1.0 },
     ["viscidus"]      = { raid = "AQ40", file = "Interface\\AddOns\\RaidMark\\maps\\map_viscidus.tga", label = "Viscidus", u2 = 1.0, v2 = 1.0 },
     ["fankriss"]      = { raid = "AQ40", file = "Interface\\AddOns\\RaidMark\\maps\\map_fankriss.tga", label = "Fankriss el Implacable", u2 = 1.0, v2 = 1.0 },
+    ["map_bugstrio"]  = { raid = "AQ40", file = "Interface\\AddOns\\RaidMark\\maps\\map_bugstrio.tga", label = "Ouro", u2 = 1.0, v2 = 1.0 },
+    ["sartura"]       = { raid = "AQ40", file = "Interface\\AddOns\\RaidMark\\maps\\map_sartura.tga", label = "Huhuran - princess", u2 = 1.0, v2 = 1.0 },
 
     -- --- NAXXRAMAS ---
     ["anubrekhan"]    = { raid = "Naxxramas", file = "Interface\\AddOns\\RaidMark\\maps\\map_anubrekhan.tga", label = "Anub'Rekhan", u2=1.0, v2=1.0 },
