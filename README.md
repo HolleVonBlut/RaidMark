@@ -4,6 +4,9 @@
 > Diseñado para Raid Leaders y Asistentes que necesitan comunicar estrategias visualmente en tiempo real.
 
 ---
+#### version de raid mark con checker de consumibles (Beta) las demas funciones siguen igual. cualquier bug reportar a "frenchlegion" DC
+
+
 
 ## ✨ Características principales
 
