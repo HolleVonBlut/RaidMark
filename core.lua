@@ -15,8 +15,8 @@ function RM.Msg(text, r, g, b)
     end
 end
 
-RM.VERSION      = "1.5"
-RM.VERSION_NUM  = 10
+RM.VERSION      = "1.6"
+RM.VERSION_NUM  = 11
 RM.ADDON_PREFIX = "RaidMark"
 
 RM.state = {
