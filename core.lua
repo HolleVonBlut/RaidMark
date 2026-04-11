@@ -15,8 +15,8 @@ function RM.Msg(text, r, g, b)
     end
 end
 
-RM.VERSION      = "1.41"
-RM.VERSION_NUM  = 9
+RM.VERSION      = "1.5"
+RM.VERSION_NUM  = 10
 RM.ADDON_PREFIX = "RaidMark"
 
 RM.state = {
@@ -297,6 +297,14 @@ SlashCmdList["RAIDMARK"] = function(msg)
     if cmd == "" or cmd == "open" then
         safeMapFrame("Toggle")
 
+    elseif cmd == "r" or cmd == "rc" or cmd == "readycheck" then
+        -- Ready Check Remoto
+        if RM.Consumables and RM.Consumables.SendReadyCheckRequest then
+            RM.Consumables.SendReadyCheckRequest()
+        else
+            RM.Msg("Panel de consumibles no inicializado. Abre /rm primero.", 1, 0.5, 0.2)
+        end
+
     elseif cmd == "close" then
         safeMapFrame("Hide")
 
@@ -331,11 +339,144 @@ SlashCmdList["RAIDMARK"] = function(msg)
             RM.Msg("Assist: OFF — solo el RL mueve.", 0.7, 0.7, 0.7)
         end
 
-    else
+    elseif cmd == "buffdebug" then
+        -- DEBUG: Imprime en el chat todos los buffs del jugador actual
+        -- Usar: /rm buffdebug
+        DEFAULT_CHAT_FRAME:AddMessage("|cffff9900[RaidMark BuffDebug] Buffs de: " .. UnitName("player") .. "|r")
+        local i = 1
+        local found = 0
+        while true do
+            local bname, brank, btex = UnitBuff("player", i)
+            if not bname then break end
+            local texStr = btex or "nil"
+            -- Calcular nombre normalizado para comparar contra la tabla
+            local normName = string.lower(texStr)
+            local lastSep = 0
+            for pos = 1, string.len(normName) do
+                local ch = string.sub(normName, pos, pos)
+                if ch == "\\" or ch == "/" then lastSep = pos end
+            end
+            local baseName = string.sub(normName, lastSep + 1)
+            local dot = 0
+            for pos = 1, string.len(baseName) do
+                if string.sub(baseName, pos, pos) == "." then dot = pos end
+            end
+            if dot > 0 then baseName = string.sub(baseName, 1, dot - 1) end
+            DEFAULT_CHAT_FRAME:AddMessage(
+                "|cffffff00[" .. i .. "]|r tex: " .. texStr ..
+                " |cff88ff88-> norm: " .. baseName .. "|r"
+            )
+            found = found + 1
+            i = i + 1
+        end
+        if found == 0 then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff4444[RaidMark] No se encontraron buffs en 'player'.|r")
+        else
+            DEFAULT_CHAT_FRAME:AddMessage("|cff44ff44[RaidMark] Total: " .. found .. " buffs.|r")
+        end
+
+    elseif string.sub(cmd, 1, 10) == "buffdebug " then
+        -- DEBUG con unit especifica: /rm buffdebug raid1
+        local unit = string.sub(cmd, 11)
+        DEFAULT_CHAT_FRAME:AddMessage("|cffff9900[RaidMark BuffDebug] Buffs de unit: " .. unit .. "|r")
+        if not UnitExists(unit) then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff4444Unit no existe: " .. unit .. "|r")
+        else
+            DEFAULT_CHAT_FRAME:AddMessage("|cffaaaaaa Nombre: " .. (UnitName(unit) or "?") .. "|r")
+            local i = 1
+            local found = 0
+            while true do
+                local bname, brank, btex = UnitBuff(unit, i)
+                if not bname then break end
+                DEFAULT_CHAT_FRAME:AddMessage(
+                    "|cffffff00[" .. i .. "]|r " ..
+                    tostring(bname) .. " | tex: " .. tostring(btex)
+                )
+                found = found + 1
+                i = i + 1
+            end
+            DEFAULT_CHAT_FRAME:AddMessage("|cff44ff44Total: " .. found .. " buffs.|r")
+        end
+
+    elseif cmd == "rabdebug" then
+        -- DEBUG: Prueba RAB_CallRaidBuffCheck con mageblood y muestra el resultado raw
+        -- Uso: /rm rabdebug
+        DEFAULT_CHAT_FRAME:AddMessage("|cffff9900[RaidMark RABdebug]|r Verificando RABuffs...")
+        if not RAB_Buffs then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff4444RAB_Buffs es nil - RABuffs no esta cargado.|r")
+        else
+            DEFAULT_CHAT_FRAME:AddMessage("|cff44ff44RAB_Buffs encontrado.|r")
+        end
+        if not RAB_CallRaidBuffCheck then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff4444RAB_CallRaidBuffCheck es nil - funcion no disponible.|r")
+        else
+            DEFAULT_CHAT_FRAME:AddMessage("|cff44ff44RAB_CallRaidBuffCheck encontrado.|r")
+            -- Verificar identifiers de keys clave
+            local testKeys = { "mageblood", "flask", "giants", "spiritofzanza" }
+            for _, tkey in ipairs(testKeys) do
+                if RAB_Buffs[tkey] then
+                    local ids = RAB_Buffs[tkey].identifiers
+                    if ids and type(ids) == "table" then
+                        DEFAULT_CHAT_FRAME:AddMessage("|cffffff00" .. tkey .. ": " .. table.getn(ids) .. " identifier(s)|r")
+                        for ii, id in ipairs(ids) do
+                            local s = string.lower(id.texture or "")
+                            local lastSep = 0
+                            for pos = 1, string.len(s) do
+                                local ch = string.sub(s, pos, pos)
+                                if ch == "\\" or ch == "/" then lastSep = pos end
+                            end
+                            DEFAULT_CHAT_FRAME:AddMessage("  tex_norm=" .. string.sub(s, lastSep+1))
+                        end
+                    else
+                        DEFAULT_CHAT_FRAME:AddMessage("|cffff8800" .. tkey .. ": identifiers vacio|r")
+                    end
+                else
+                    DEFAULT_CHAT_FRAME:AddMessage("|cff888888'" .. tkey .. "' NO en RAB_Buffs|r")
+                end
+            end
+            -- Mostrar buffs activos del jugador
+            DEFAULT_CHAT_FRAME:AddMessage("|cffffff00Buffs activos (texturas normalizadas):|r")
+            local bi = 1
+            while true do
+                local btex = UnitBuff("player", bi)
+                if not btex then break end
+                local s = string.lower(btex)
+                local lastSep = 0
+                for pos = 1, string.len(s) do
+                    local ch = string.sub(s, pos, pos)
+                    if ch == "\\" or ch == "/" then lastSep = pos end
+                end
+                DEFAULT_CHAT_FRAME:AddMessage("  [" .. bi .. "] " .. string.sub(s, lastSep+1))
+                bi = bi + 1
+            end
+        end
+
+    elseif cmd == "rabkeys" then
+        -- DEBUG: Lista las primeras keys de RAB_Buffs para verificar nombres exactos
+        -- Uso: /rm rabkeys
+        if not RAB_Buffs then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff4444RAB_Buffs no encontrado.|r")
+        else
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff9900[RABkeys] Primeras keys en RAB_Buffs:|r")
+            local count = 0
+            for k, v in pairs(RAB_Buffs) do
+                count = count + 1
+                if count <= 30 then
+                    DEFAULT_CHAT_FRAME:AddMessage("  " .. tostring(k) .. " = " .. tostring(v.name or "?"))
+                end
+            end
+            DEFAULT_CHAT_FRAME:AddMessage("Total keys: " .. count)
+        end
+
         DEFAULT_CHAT_FRAME:AddMessage("RaidMark comandos:")
         DEFAULT_CHAT_FRAME:AddMessage("  /rm           -- abrir/cerrar mapa")
         DEFAULT_CHAT_FRAME:AddMessage("  /rm map <key> -- cambiar mapa")
         DEFAULT_CHAT_FRAME:AddMessage("  /rm clear     -- limpiar todos los iconos")
         DEFAULT_CHAT_FRAME:AddMessage("  /rm assist on/off -- permisos de asistentes")
+        DEFAULT_CHAT_FRAME:AddMessage("  /rm buffdebug      -- listar tus buffs actuales")
+        DEFAULT_CHAT_FRAME:AddMessage("  /rm buffdebug raid1 -- listar buffs de raid1")
+        DEFAULT_CHAT_FRAME:AddMessage("  /rm rabdebug       -- probar RAB_CallRaidBuffCheck")
+        DEFAULT_CHAT_FRAME:AddMessage("  /rm rabkeys        -- listar keys de RAB_Buffs")
+        DEFAULT_CHAT_FRAME:AddMessage("  /rm r              -- Ready Check Remoto")
     end
 end

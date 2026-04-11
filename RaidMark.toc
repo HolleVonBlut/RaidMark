@@ -2,7 +2,7 @@
 ## Title: RaidMark — Tactical Map
 ## Notes: Mesa de tácticas para raids. Marcas en tiempo real para todo el grupo.
 ## Author: Holle
-## Version: 1.41
+## Version: 1.5
 ## SavedVariables: RaidMarkDB RaidMarkSceneDB
 
 maps\maps.lua
@@ -12,4 +12,5 @@ network.lua
 roster.lua
 icons.lua
 scenes.lua
+consumables.lua
 mapframe.lua

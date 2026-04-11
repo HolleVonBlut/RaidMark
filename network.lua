@@ -508,6 +508,12 @@ function N.OnReceive(msg, channel, sender)
             RM.MapFrame.SetAssignCooldown(duration)
         end
 
+    elseif cmd == "RC_REQ" or cmd == "RC_RESULT" then
+        -- Ready Check Remoto - delegar a consumables.lua
+        if RM.Consumables and RM.Consumables.OnNetworkRC then
+            RM.Consumables.OnNetworkRC(cmd, parts, sender)
+        end
+
     elseif cmd == "VER" then
         local theirVer = tonumber(parts[2]) or 0
         if theirVer > RM.VERSION_NUM then

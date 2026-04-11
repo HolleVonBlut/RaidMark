@@ -2755,6 +2755,13 @@ function MF.Hide()
     if RaidMarkGrandSlotDD then RaidMarkGrandSlotDD:Hide() end
     if RaidMarkFilterDD then RaidMarkFilterDD:Hide() end
     if RaidMarkHelp then RaidMarkHelp:Hide() end
+    -- Cerrar panel de consumibles y sus dropdowns flotantes
+    if RaidMarkCSPanel then RaidMarkCSPanel:Hide() end
+    if RaidMarkCSResistDD then RaidMarkCSResistDD:Hide() end
+    if RaidMarkActiveWeightPopup then
+        RaidMarkActiveWeightPopup:Hide()
+        RaidMarkActiveWeightPopup = nil
+    end
 end
 
 
@@ -2961,5 +2968,9 @@ function MF.Build()
     buildRoleButtons()
     buildToolbar()
     buildPointerLocalFrame()
+    -- Panel de consumibles (consumables.lua)
+    if RM.Consumables and RM.Consumables.Build then
+        RM.Consumables.Build(mainFrame, sidePanel)
+    end
     MF.ConsoleMsg("RaidMark v" .. RM.VERSION .. " listo.")
 end
