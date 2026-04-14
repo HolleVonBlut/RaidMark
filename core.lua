@@ -15,8 +15,8 @@ function RM.Msg(text, r, g, b)
     end
 end
 
-RM.VERSION      = "1.6"
-RM.VERSION_NUM  = 11
+RM.VERSION      = "1.5"
+RM.VERSION_NUM  = 10
 RM.ADDON_PREFIX = "RaidMark"
 
 RM.state = {
@@ -169,13 +169,8 @@ function RM.OnLoad()
         RaidMarkDB.memberRoles = RM.state.memberRoles
     end
 
-    DEFAULT_CHAT_FRAME:AddMessage("RaidMark DEBUG: MapFrame=" .. tostring(RM.MapFrame) .. " Icons=" .. tostring(RM.Icons))
-
     if RM.MapFrame and RM.MapFrame.Build then
         RM.MapFrame.Build()
-        DEFAULT_CHAT_FRAME:AddMessage("RaidMark DEBUG: Build() ejecutado OK")
-    else
-        DEFAULT_CHAT_FRAME:AddMessage("RaidMark DEBUG: MapFrame.Build no encontrado")
     end
 
     DEFAULT_CHAT_FRAME:AddMessage(
@@ -207,6 +202,27 @@ end
 
 function RM.OnEnterWorld()
     RM.Roster.Rebuild()
+    -- Si el jugador es RL al entrar al mundo, activar Assist:ON automaticamente
+    -- Usamos un pequeno delay para asegurar que el roster este listo
+    local initFrame = CreateFrame("Frame")
+    local initTimer = 0
+    initFrame:SetScript("OnUpdate", function()
+        initTimer = initTimer + arg1
+        if initTimer >= 2 then  -- esperar 2s para que el roster cargue
+            initFrame:SetScript("OnUpdate", nil)
+            if RM.Permissions.IsRL() and not RM.state.assistCanMove then
+                RM.state.assistCanMove = true
+                -- Broadcast si estamos en raid
+                if GetNumRaidMembers() > 0 or GetNumPartyMembers() > 0 then
+                    RM.Network.SendPermissions(true)
+                end
+                -- Actualizar boton del widget si esta abierto
+                if RM.Widget and RM.Widget.updateAssistBtn then
+                    RM.Widget.updateAssistBtn()
+                end
+            end
+        end
+    end)
 end
 
 function RM.NextId()
@@ -304,6 +320,33 @@ SlashCmdList["RAIDMARK"] = function(msg)
         else
             RM.Msg("Panel de consumibles no inicializado. Abre /rm primero.", 1, 0.5, 0.2)
         end
+
+    elseif cmd == "w" or cmd == "widget" then
+        if RM.Widget then
+            RM.Widget.Toggle()
+        else
+            RM.Msg("Widget no disponible.", 1, 0.5, 0.2)
+        end
+
+    elseif cmd == "rcdebug" then
+        -- Activa un frame que logea TODOS los CHAT_MSG_SYSTEM durante 30 segundos
+        -- Util para encontrar el texto exacto de los mensajes de RC en Turtle WoW
+        RM.Msg("RC Debug ACTIVADO - logea CHAT_MSG_SYSTEM por 30s.", 0.5, 1, 0.5)
+        local rcDebugFrame = CreateFrame("Frame","RaidMarkRCDebug")
+        rcDebugFrame:RegisterEvent("CHAT_MSG_SYSTEM")
+        local elapsed = 0
+        rcDebugFrame:SetScript("OnEvent",function()
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff9900[RCDebug SYSTEM]|r " .. tostring(arg1))
+        end)
+        rcDebugFrame:SetScript("OnUpdate",function()
+            elapsed = elapsed + arg1
+            if elapsed >= 30 then
+                rcDebugFrame:UnregisterAllEvents()
+                rcDebugFrame:SetScript("OnUpdate",nil)
+                rcDebugFrame:SetScript("OnEvent",nil)
+                RM.Msg("RC Debug desactivado.", 0.5, 0.5, 0.5)
+            end
+        end)
 
     elseif cmd == "close" then
         safeMapFrame("Hide")
@@ -478,5 +521,7 @@ SlashCmdList["RAIDMARK"] = function(msg)
         DEFAULT_CHAT_FRAME:AddMessage("  /rm rabdebug       -- probar RAB_CallRaidBuffCheck")
         DEFAULT_CHAT_FRAME:AddMessage("  /rm rabkeys        -- listar keys de RAB_Buffs")
         DEFAULT_CHAT_FRAME:AddMessage("  /rm r              -- Ready Check Remoto")
+        DEFAULT_CHAT_FRAME:AddMessage("  /rm w              -- Toggle widget flotante")
+        DEFAULT_CHAT_FRAME:AddMessage("  /rm rcdebug        -- Activar log de CHAT_MSG_SYSTEM (debug RC)")
     end
 end

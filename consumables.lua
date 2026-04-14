@@ -268,6 +268,10 @@ local function playerMissingCritStr(playerName, role)
     return s
 end
 
+-- ── Funciones expuestas para el widget ──────────────────────────
+-- El widget accede a estas funciones via RM.Consumables (CS)
+-- Se asignan despues de que las funciones locales esten definidas
+
 -- ── Generacion de reportes ────────────────────────────────────────
 local ROLE_ORDER = { "TANK", "HEAL", "DPS_M", "DPS_R" }
 local ROLE_LABEL = { TANK="Tank", HEAL="Heal", DPS_M="DPS-M", DPS_R="DPS-R" }
@@ -522,6 +526,24 @@ local function buildRWMessages(lines)
     return msgs
 end
 
+-- ── Funciones expuestas para widget ─────────────────────────────
+function CS.DoScan()       doScan()       end
+function CS.DoFlask(sendRW)
+    if CS.scanCount == 0 then doScan() end
+    local lines = buildFlaskLines()
+    if CS._refreshBox then CS._refreshBox(lines) end
+    if sendRW then sendRWQueue(buildRWMessages(lines)) end
+    return lines
+end
+function CS.DoResist(resistDef, sendRW)
+    if CS.scanCount == 0 then doScan() end
+    local lines = buildResistLines(resistDef)
+    if CS._refreshBox then CS._refreshBox(lines) end
+    if sendRW then sendRWQueue(buildRWMessages(lines)) end
+    return lines
+end
+function CS.GetResistDefs() return CS.RESIST_DEFS end
+
 -- ── Ready Check Remoto ───────────────────────────────────────────
 -- Protocolo:
 --   Assist -> RL: "RC_REQ" via SendAddonMessage
@@ -534,36 +556,46 @@ CS.rcPending    = false   -- hay un RC en curso
 CS.rcResults    = {}      -- { [nombre] = "ready"|"notready"|"afk" }
 CS.rcTotal      = 0       -- total de raiders esperados
 CS.rcRequester  = nil     -- nombre del assist que lo pidio (para RL)
+CS.rcGrace      = false   -- periodo de gracia post-FINISHED (3s) para capturar "X is not ready"
 
 local RC_DISPLAY_SECS = 15  -- tiempo que se muestra el resultado
+local RC_GRACE_SECS   = 4   -- segundos de gracia para capturar mensajes post-FINISHED
 
 local function rcDisplayResults()
-    if not CS._setInfoBox then return end
     local notReady = {}
     local afk      = {}
     for name, state in pairs(CS.rcResults) do
         if state == "notready" then table.insert(notReady, name)
         elseif state == "afk"  then table.insert(afk, name) end
     end
-    local lines = {}
-    if table.getn(notReady) > 0 then
-        local s = ""
-        for ii, n in ipairs(notReady) do
-            if ii > 1 then s = s..", " end; s = s..n
-        end
-        table.insert(lines, "No listos: "..s)
-    end
-    if table.getn(afk) > 0 then
-        local s = ""
-        for ii, n in ipairs(afk) do
-            if ii > 1 then s = s..", " end; s = s..n
-        end
-        table.insert(lines, "AFK: "..s)
-    end
-    if table.getn(lines) == 0 then
-        CS._setInfoBox("RC: Todos listos!", 0.3, 1, 0.4)
+    local txt, r, g, b
+    if table.getn(notReady) == 0 and table.getn(afk) == 0 then
+        txt = "RC: Todos listos!"
+        r, g, b = 0.3, 1, 0.4
     else
-        CS._setInfoBox("RC: "..table.concat(lines, " | "), 1, 0.5, 0.15)
+        local parts = {}
+        if table.getn(notReady) > 0 then
+            local s = ""
+            for ii, n in ipairs(notReady) do
+                if ii > 1 then s = s..", " end; s = s..n
+            end
+            table.insert(parts, "No listos: "..s)
+        end
+        if table.getn(afk) > 0 then
+            local s = ""
+            for ii, n in ipairs(afk) do
+                if ii > 1 then s = s..", " end; s = s..n
+            end
+            table.insert(parts, "AFK: "..s)
+        end
+        txt = "RC: "..table.concat(parts, " | ")
+        r, g, b = 1, 0.5, 0.15
+    end
+    -- Mostrar en panel si esta construido
+    if CS._setInfoBox then CS._setInfoBox(txt, r, g, b) end
+    -- Mostrar en widget siempre (funciona aunque el panel no este abierto)
+    if RM.Widget and RM.Widget.setInfo then
+        RM.Widget.setInfo(txt, 15)
     end
 end
 
@@ -592,60 +624,122 @@ function CS.SendReadyCheckRequest()
 end
 CS.SendReadyCheckRequest = CS.SendReadyCheckRequest  -- expose global
 
--- Eventos de Ready Check: escuchar respuestas
+-- Eventos de Ready Check + CHAT_MSG_SYSTEM para broadcast de mensajes RC
 local rcEventFrame = CreateFrame("Frame", "RaidMarkRCEventFrame")
 rcEventFrame:RegisterEvent("READY_CHECK")
 rcEventFrame:RegisterEvent("READY_CHECK_CONFIRM")
 rcEventFrame:RegisterEvent("READY_CHECK_FINISHED")
+rcEventFrame:RegisterEvent("CHAT_MSG_SYSTEM")
 
 rcEventFrame:SetScript("OnEvent", function()
     local ev = event
     if ev == "READY_CHECK" then
-        -- Nuevo RC iniciado (alguien hizo DoReadyCheck)
+        -- RC iniciado. Limpiar resultados anteriores.
         CS.rcResults = {}
         CS.rcTotal   = GetNumRaidMembers()
         CS.rcPending = true
         if CS._setInfoBox then CS._setInfoBox("RC en curso...", 0.9, 0.85, 0.3) end
+        -- Broadcast a toda la raid que hay un RC en curso
+        if RM.Permissions.IsRL() then
+            RM.Network.SendRaw("RC_START")
+        end
 
     elseif ev == "READY_CHECK_CONFIRM" then
-        -- arg1 = nombre del jugador, arg2 = 1 si ready, 0 si no
-        local name  = arg1
+        -- En WoW 1.12: arg1 = unit ID (ej "raid1", "party1", "player")
+        -- Obtenemos el nombre desde la unit
+        local unit  = arg1
+        local name  = (unit and UnitExists(unit)) and UnitName(unit) or unit
         local ready = (arg2 == 1)
         if name and name ~= "" then
             CS.rcResults[name] = ready and "ready" or "notready"
-            -- Si somos RL enviamos el resultado al assist que lo pidio
-            if RM.Permissions.IsRL() and CS.rcRequester then
+            if RM.Permissions.IsRL() then
                 local state = ready and "ready" or "notready"
                 RM.Network.SendRaw("RC_RESULT;"..name..";"..state)
+                -- Tambien enviar el texto legible para el box informativo
+                -- Esto garantiza que llegue aunque CHAT_MSG_SYSTEM use otro formato
+                if not ready then
+                    RM.Network.SendRaw("RC_MSG;"..name.." is not ready.")
+                end
             end
             if CS.rcPending then rcDisplayResults() end
         end
 
     elseif ev == "READY_CHECK_FINISHED" then
         CS.rcPending = false
-        -- Marcar AFK a los que no respondieron
-        if GetNumRaidMembers() > 0 then
+        CS.rcGrace   = true  -- mantener broadcast de CHAT_MSG_SYSTEM por RC_GRACE_SECS
+        -- Timer para cerrar el periodo de gracia
+        local graceTimer = 0
+        local graceFrame = CreateFrame("Frame","RaidMarkRCGrace")
+        graceFrame:SetScript("OnUpdate",function()
+            graceTimer = graceTimer + arg1
+            if graceTimer >= RC_GRACE_SECS then
+                CS.rcGrace = false
+                graceFrame:SetScript("OnUpdate",nil)
+            end
+        end)
+        local total = GetNumRaidMembers()
+        if total > 0 then
             for i = 1, 40 do
                 local name = GetRaidRosterInfo(i)
                 if name and name ~= "" and not CS.rcResults[name] then
                     CS.rcResults[name] = "afk"
-                    if RM.Permissions.IsRL() and CS.rcRequester then
+                    if RM.Permissions.IsRL() then
                         RM.Network.SendRaw("RC_RESULT;"..name..";afk")
                     end
                 end
             end
         end
         rcDisplayResults()
-        -- Auto-limpiar tras RC_DISPLAY_SECS
-        local t = 0
+        if RM.Permissions.IsRL() then
+            RM.Network.SendRaw("RC_END")
+        end
+        local rcClearTimer = 0
         local clearFrame = CreateFrame("Frame", "RaidMarkRCClear")
         clearFrame:SetScript("OnUpdate", function()
-            t = t + arg1
-            if t >= RC_DISPLAY_SECS then
+            rcClearTimer = rcClearTimer + arg1
+            if rcClearTimer >= RC_DISPLAY_SECS then
                 if CS._setInfoBox then CS._setInfoBox("", 0.5, 0.5, 0.5) end
                 clearFrame:SetScript("OnUpdate", nil)
             end
         end)
+
+    elseif ev == "CHAT_MSG_SYSTEM" then
+        -- RL intercepta mensajes del sistema relacionados con RC
+        -- y los broadcastea a toda la raid (incluyendo Assists sin RC local)
+        -- No-RL: capturar "already running a ready check" localmente
+        if not RM.Permissions.IsRL() then
+            local localMsg = arg1 or ""
+            if string.find(localMsg, "already") and
+               (string.find(localMsg, "ready check") or string.find(localMsg, "Ready Check")) then
+                if CS._setInfoBox then CS._setInfoBox("RC ya en marcha!", 6) end
+                if RM.Widget and RM.Widget.setInfo then
+                    RM.Widget.setInfo("RC ya en marcha!", 6)
+                end
+            end
+            return
+        end
+        if not CS.rcPending and not CS.rcGrace then return end
+        local sysMsg = arg1 or ""
+        -- Filtrar solo mensajes de RC (en ingles segun cliente 1.12)
+        local isRC = false
+        if string.find(sysMsg, "ready check") or
+           string.find(sysMsg, "Ready Check") or
+           string.find(sysMsg, "Ready check") or
+           string.find(sysMsg, "not ready") or
+           string.find(sysMsg, "Not Ready") or
+           string.find(sysMsg, "is not ready") or
+           string.find(sysMsg, "is AFK") or
+           string.find(sysMsg, "players are AFK") or
+           string.find(sysMsg, "No players") or
+           string.find(sysMsg, "already") then
+            isRC = true
+        end
+        if isRC then
+            -- Broadcastear el texto exacto del sistema a toda la raid
+            RM.Network.SendRaw("RC_MSG;"..sysMsg)
+            -- Mostrar tambien localmente en el box del RL
+            if CS._setInfoBox then CS._setInfoBox(sysMsg, 0.9, 0.85, 0.2) end
+        end
     end
 end)
 
@@ -653,7 +747,7 @@ end)
 -- Llamado desde RM.Network.OnReceive en network.lua via hook
 function CS.OnNetworkRC(cmd, parts, sender)
     if cmd == "RC_REQ" then
-        -- Solo el RL reacciona a solicitudes de RC
+        -- Solo el RL ejecuta el RC
         if not RM.Permissions.IsRL() then return end
         CS.rcRequester = parts[2] or sender
         CS.rcResults   = {}
@@ -662,14 +756,76 @@ function CS.OnNetworkRC(cmd, parts, sender)
         DoReadyCheck()
         RM.Msg("RC solicitado por "..tostring(CS.rcRequester), 0.9, 0.85, 0.3)
 
+    elseif cmd == "RC_START" then
+        if RM.Permissions.IsRL() then return end
+        CS.rcResults = {}
+        CS.rcPending = true
+        CS.rcGrace   = false
+        DEFAULT_CHAT_FRAME:AddMessage("|cffffcc00RC en curso...|r")
+        if CS._setInfoBox then CS._setInfoBox("RC en curso...", 0.9, 0.85, 0.3) end
+        if RM.Widget and RM.Widget.setInfo then RM.Widget.setInfo("RC en curso...", 30) end
+
     elseif cmd == "RC_RESULT" then
-        -- El assist recibe resultados del RL
-        if RM.Permissions.IsRL() then return end  -- el RL ya los tiene localmente
+        -- Todos los no-RL reciben resultados parciales
+        if RM.Permissions.IsRL() then return end
         local name  = parts[2]
         local state = parts[3]
         if name and state then
             CS.rcResults[name] = state
             rcDisplayResults()
+        end
+
+    elseif cmd == "RC_END" then
+        if RM.Permissions.IsRL() then return end
+        CS.rcPending = false
+        -- Mostrar resultado final en chat
+        local notReady2 = {}
+        local afk2 = {}
+        for name, state in pairs(CS.rcResults) do
+            if state == "notready" then table.insert(notReady2, name)
+            elseif state == "afk" then table.insert(afk2, name) end
+        end
+        if table.getn(notReady2) == 0 and table.getn(afk2) == 0 then
+            DEFAULT_CHAT_FRAME:AddMessage("|cff44ff44RC: Todos listos!|r")
+        else
+            if table.getn(notReady2) > 0 then
+                local s = ""
+                for ii, n in ipairs(notReady2) do if ii>1 then s=s..", " end; s=s..n end
+                DEFAULT_CHAT_FRAME:AddMessage("|cffff6600RC No listos: "..s.."|r")
+            end
+            if table.getn(afk2) > 0 then
+                local s = ""
+                for ii, n in ipairs(afk2) do if ii>1 then s=s..", " end; s=s..n end
+                DEFAULT_CHAT_FRAME:AddMessage("|cffff4444RC AFK: "..s.."|r")
+            end
+        end
+        rcDisplayResults()
+        local rcClearTimer2 = 0
+        local cf2 = CreateFrame("Frame", "RaidMarkRCClear2")
+        cf2:SetScript("OnUpdate", function()
+            rcClearTimer2 = rcClearTimer2 + arg1
+            if rcClearTimer2 >= RC_DISPLAY_SECS then
+                if CS._setInfoBox then CS._setInfoBox("", 0.5, 0.5, 0.5) end
+                cf2:SetScript("OnUpdate", nil)
+            end
+        end)
+
+    elseif cmd == "RC_MSG" then
+        -- Mensaje del RC recibido del RL - mismo texto amarillo que ve el RL localmente
+        if RM.Permissions.IsRL() then return end
+        local txt = ""
+        for i = 2, table.getn(parts) do
+            if i > 2 then txt = txt..";" end
+            txt = txt..parts[i]
+        end
+        if txt ~= "" then
+            -- Imprimir en el chat con color amarillo (igual que el log del RL)
+            DEFAULT_CHAT_FRAME:AddMessage("|cffffcc00"..txt.."|r")
+            -- Actualizar panel y widget si estan disponibles
+            if CS._setInfoBox then CS._setInfoBox(txt, 0.9, 0.85, 0.2) end
+            if RM.Widget and RM.Widget.setInfo then
+                RM.Widget.setInfo(txt, 12)
+            end
         end
     end
 end
@@ -1465,7 +1621,23 @@ function CS.Build(mainFrame, sidePanel)
     rcBtn:SetScript("OnClick", function()
         CS.SendReadyCheckRequest()
     end)
+    thY = thY - 30
 
+    -- Boton Widget (config sidebar)
+    local wgtBtn = makeBtn("Widget", sideW-8, configArea)
+    wgtBtn:SetPoint("TOPLEFT",configArea,"TOPLEFT",sidebarX+2,thY)
+    wgtBtn.labelText:SetTextColor(0.5, 0.8, 0.9, 1)
+    wgtBtn:SetBackdropBorderColor(0.2, 0.45, 0.55, 1)
+    wgtBtn:SetScript("OnClick", function()
+        if RM.Widget then RM.Widget.Toggle() end
+    end)
+    wgtBtn:SetScript("OnEnter", function()
+        GameTooltip:SetOwner(wgtBtn,"ANCHOR_LEFT")
+        GameTooltip:SetText("Widget flotante")
+        GameTooltip:AddLine("Abre/cierra el widget. Tambien: /rm w",0.7,0.7,0.7,true)
+        GameTooltip:Show()
+    end)
+    wgtBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
     -- ── Area Reporte ─────────────────────────────────────────────
     reportArea = CreateFrame("Frame",nil,csPanel)
@@ -1624,6 +1796,24 @@ function CS.Build(mainFrame, sidePanel)
     rRcBtn:SetScript("OnClick", function()
         CS.SendReadyCheckRequest()
     end)
+    rThY = rThY - 30
+
+    -- Boton Widget (reporte sidebar)
+    local rWgtBtn = makeBtn("Widget", rSideW-8, reportArea)
+    rWgtBtn:SetPoint("TOPLEFT",reportArea,"TOPLEFT",rSideX+2,rThY)
+    rWgtBtn.labelText:SetTextColor(0.5, 0.8, 0.9, 1)
+    rWgtBtn:SetBackdropBorderColor(0.2, 0.45, 0.55, 1)
+    rWgtBtn:SetScript("OnClick", function()
+        if RM.Widget then RM.Widget.Toggle() end
+    end)
+    rWgtBtn:SetScript("OnEnter", function()
+        GameTooltip:SetOwner(rWgtBtn,"ANCHOR_LEFT")
+        GameTooltip:SetText("Widget flotante")
+        GameTooltip:AddLine("Abre/cierra el widget de control rapido.",0.7,0.7,0.7,true)
+        GameTooltip:AddLine("Tambien: /rm w",0.5,0.5,0.5,true)
+        GameTooltip:Show()
+    end)
+    rWgtBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
     rThY = rThY - 26
 
     -- ── Sistema de box informativo compartido ─────────────────────
@@ -1641,8 +1831,13 @@ function CS.Build(mainFrame, sidePanel)
             rNoRoleLbl:SetText(txt or "")
             rNoRoleLbl:SetTextColor(r or 0.8, g or 0.7, b or 0.4, 1)
         end
+        -- Tambien actualizar el widget si esta abierto
+        if RM.Widget and RM.Widget.visible then
+            RM.Widget.setInfo(txt, 8)
+        end
     end
     CS._setInfoBox = setInfoBox
+    CS._refreshBox = refreshBox
 
     -- Mostrar sin rol durante 8 segundos, luego limpiar el box
     local function updateNoRoleLabels()

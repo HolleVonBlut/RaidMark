@@ -13,4 +13,5 @@ roster.lua
 icons.lua
 scenes.lua
 consumables.lua
+widget.lua
 mapframe.lua

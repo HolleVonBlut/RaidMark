@@ -20,7 +20,6 @@ local function BigFontOutline(fs, base)
     fs:SetFont("Fonts\\FRIZQT__.TTF", math.floor(base * 1.15 + 0.5), "OUTLINE")
 end
 
-DEFAULT_CHAT_FRAME:AddMessage("RaidMark DEBUG: mapframe.lua inicio OK")
 
 -- -- Dimensiones (+50%) --------------------------------------------
 local MAP_W         = 1365  -- +30% sobre 1050
@@ -2963,6 +2962,13 @@ raidChatFrame:RegisterEvent("CHAT_MSG_RAID")
 raidChatFrame:SetScript("OnEvent", function()
     if MF.OnRaidChat then MF.OnRaidChat(arg1, arg2) end
 end)
+
+-- Exponer auto-total para acceso desde widget
+function MF.RunAutoTotal()
+    if autoTotalBtn then
+        autoTotalBtn:GetScript("OnClick")(autoTotalBtn)
+    end
+end
 
 function MF.Build()
     buildRoleButtons()

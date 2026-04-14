@@ -508,10 +508,16 @@ function N.OnReceive(msg, channel, sender)
             RM.MapFrame.SetAssignCooldown(duration)
         end
 
-    elseif cmd == "RC_REQ" or cmd == "RC_RESULT" then
+    elseif cmd == "RC_REQ" or cmd == "RC_RESULT" or cmd == "RC_START" or cmd == "RC_END" or cmd == "RC_MSG" then
         -- Ready Check Remoto - delegar a consumables.lua
         if RM.Consumables and RM.Consumables.OnNetworkRC then
             RM.Consumables.OnNetworkRC(cmd, parts, sender)
+        end
+
+    elseif cmd == "PULL_START" or cmd == "PULL_CANCEL" or cmd == "PULL_END" then
+        -- Sincronizacion de estado del pull entre widgets
+        if RM.Widget and RM.Widget.OnNetworkPull then
+            RM.Widget.OnNetworkPull(cmd, parts, sender)
         end
 
     elseif cmd == "VER" then
